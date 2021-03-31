@@ -1,0 +1,9 @@
+{
+  "loginFromFile" : true,
+  "serverPort": 5703,
+  "mariaAddress" : "localhost",
+  "mariaPort" : 3306,
+  "dbName" : "competition",
+  "dbLogin" : "kmakeev",
+  "dbPassword" : "test"
+}
