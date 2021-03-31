@@ -5,20 +5,18 @@ import (
 	"net"
 )
 
-type ConnectedClient struct {
+type Communicator struct {
 	conn                  net.Conn
-	name                  string
-	Lobby                 *Lobby
-	dataReceivedListeners []func(str string, client *ConnectedClient)
+	dataReceivedListeners []func(str string)
 	active                bool
 }
 
-func (c ConnectedClient) StartCommunicator() {
+func (c Communicator) Start() {
 	c.active = true
 	go c.communicate()
 }
 
-func (c ConnectedClient) communicate() {
+func (c Communicator) communicate() {
 	defer c.conn.Close()
 	for c.active {
 		input := make([]byte, 1024*4)
@@ -30,12 +28,12 @@ func (c ConnectedClient) communicate() {
 		}
 		source := string(input[0:n])
 		for _, h := range c.dataReceivedListeners {
-			h(source, &c)
+			h(source)
 		}
 	}
 }
 
-func (c ConnectedClient) SendData(str string) {
+func (c Communicator) SendData(str string) {
 	if c.active {
 		n, err := c.conn.Write([]byte(str))
 		if n == 0 || err != nil {
@@ -45,7 +43,7 @@ func (c ConnectedClient) SendData(str string) {
 	}
 }
 
-func (c ConnectedClient) Stop() {
+func (c Communicator) Stop() {
 	c.active = false
 	err := c.conn.Close()
 	if err != nil {
@@ -53,13 +51,6 @@ func (c ConnectedClient) Stop() {
 	}
 }
 
-func (c ConnectedClient) AddListener(f func(str string, client *ConnectedClient)) {
+func (c Communicator) AddListener(f func(str string)) {
 	c.dataReceivedListeners = append(c.dataReceivedListeners, f)
-}
-
-func (c ConnectedClient) login(string2 string) {
-
-}
-func (c ConnectedClient) joinLobby(string2 string) {
-
 }
