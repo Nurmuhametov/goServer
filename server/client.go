@@ -35,9 +35,9 @@ func (c ConnectedClient) communicate() {
 	}
 }
 
-func (c ConnectedClient) SendData(str string) {
+func (c ConnectedClient) SendData(data []byte) {
 	if c.active {
-		n, err := c.conn.Write([]byte(str))
+		n, err := c.conn.Write(data)
 		if n == 0 || err != nil {
 			fmt.Println("Write error:", err)
 			c.active = false
@@ -49,7 +49,7 @@ func (c ConnectedClient) Stop() {
 	c.active = false
 	err := c.conn.Close()
 	if err != nil {
-		fmt.Println("Write error:", err)
+		fmt.Println("Closing error:", err)
 	}
 }
 

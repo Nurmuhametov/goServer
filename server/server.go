@@ -20,8 +20,8 @@ const MaxPlayers = 24
 
 type Server struct {
 	Listener        net.Listener
-	connectedClient []*ConnectedClient
-	lobbies         map[uint]LobbyInfo
+	connectedClient map[*ConnectedClient]*Lobby
+	lobbies         map[uint]*Lobby
 	db              *sql.DB
 	competitors     []string
 	schedule        map[string][]string
@@ -51,8 +51,8 @@ func Init() *Server {
 	res.db = db
 	res.port = conf.ServerPort
 	res.active = true
-	res.connectedClient = make([]*ConnectedClient, 0, MaxPlayers)
-	res.lobbies = make(map[uint]LobbyInfo, 256)
+	res.connectedClient = make(map[*ConnectedClient]*Lobby, MaxPlayers)
+	res.lobbies = make(map[uint]*Lobby, 256)
 	return res
 }
 
@@ -96,7 +96,7 @@ func (s *Server) addNewClient(conn net.Conn) {
 	}
 	cc.dataReceivedListeners = append(cc.dataReceivedListeners, s.dataReceived)
 	cc.StartCommunicator()
-	s.connectedClient = append(s.connectedClient, cc)
+	s.connectedClient[cc] = nil
 }
 
 func (s *Server) dataReceived(str string, c *ConnectedClient) {
@@ -111,31 +111,97 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 			if err != nil {
 				msg := Message{Msg: "LOGIN FAILED"}
 				data, _ := json.Marshal(msg)
-				c.SendData(string(data))
+				c.SendData(data)
 			} else {
 				msg := Message{Msg: "LOGIN OK"}
 				data, _ := json.Marshal(msg)
-				c.SendData(string(data))
+				c.SendData(data)
 			}
 		case "SOCKET JOINLOBBY":
 			if c.name == "" {
 				msg := Message{Msg: "LOGIN FIRST"}
 				data, _ := json.Marshal(msg)
-				c.SendData(string(data))
+				c.SendData(data)
 			} else {
 				res, err := s.joinLobby(split[1], c.name)
 				if err != nil {
-					println(err)
+					println(err.Error())
 					var jLR = JoinLobbyResponse{
 						Data:    LobbyInfo{},
 						Success: false,
 					}
 					data, _ := json.Marshal(jLR)
-					c.SendData(string(data))
+					c.SendData(data)
+					s.connectedClient[c] = nil
+					c.Lobby = nil
 				} else {
-					c.SendData(res)
+					data, _ := json.Marshal(res)
+					i, _ := strconv.Atoi(*res.Data.ID)
+					err := s.lobbies[uint(i)].AddPLayer(c)
+					if err != nil {
+						var jLR = JoinLobbyResponse{
+							Data:    LobbyInfo{},
+							Success: false,
+						}
+						data, _ := json.Marshal(jLR)
+						c.SendData(data)
+						s.connectedClient[c] = nil
+						c.Lobby = nil
+					} else {
+						s.connectedClient[c] = s.lobbies[uint(i)]
+						c.Lobby = s.lobbies[uint(i)]
+						c.SendData(data)
+					}
 				}
 			}
+		case "DISCONNECT":
+			c.Lobby.removePlayer(c)
+			msg := Message{Msg: "BYE"}
+			data, _ := json.Marshal(msg)
+			c.SendData(data)
+			c.Stop()
+			var id = func() string {
+				if c.name == "" {
+					return c.conn.RemoteAddr().String()
+				} else {
+					return c.name
+				}
+			}()
+			fmt.Printf("User %s disconnected\n", id)
+			delete(s.connectedClient, c)
+		case "GET LOBBY":
+			s.updateLobbies()
+			var infos = make([]LobbyInfo, len(s.lobbies), len(s.lobbies))
+			for index, lobby := range s.lobbies {
+				infos[index] = lobby.Info
+			}
+			var getLobbyResponse = GetLobbyResponse{
+				Data:    infos,
+				Success: true,
+			}
+			data, _ := json.Marshal(getLobbyResponse)
+			c.SendData(data)
+		case "GET RANDOMLOBBY":
+			var lobbyID = LobbyID{}
+			var data, _ = json.Marshal(lobbyID)
+			c.SendData(data)
+		case "POST LOBBY":
+			id, err := s.postLobby(split[1])
+			if err != nil {
+				msg := Message{Msg: "Неправильно ты, дядя Фёдор, лобби постишь, надо по правилам создавать, читай man"}
+				data, _ := json.Marshal(msg)
+				c.SendData(data)
+			} else {
+				var lobbyID = LobbyID{ID: &id}
+				data, _ := json.Marshal(lobbyID)
+				c.SendData(data)
+			}
+		case "SOCKET LEAVELOBBY":
+			c.Lobby = nil
+			s.connectedClient[c] = nil
+			msg := Message{Msg: "OK"}
+			data, _ := json.Marshal(msg)
+			c.SendData(data)
 		}
 	}
 }
@@ -237,13 +303,12 @@ func (s *Server) updateLobbies() {
 		var width, height, gameBarrierCount, playerBarrierCount, playersCount uint8
 		var name string
 		err := rows.Scan(&id, &width, &height, &gameBarrierCount, &playerBarrierCount, &name, &playersCount)
+		var ID = strconv.Itoa(int(id))
 		if err != nil {
 			println(err)
 		}
-		var ID = new(string)
-		*ID = strconv.Itoa(int(id))
 		var lobbyInfo = LobbyInfo{
-			ID:                 ID,
+			ID:                 &ID,
 			Width:              width,
 			Height:             height,
 			GameBarrierCount:   gameBarrierCount,
@@ -251,52 +316,52 @@ func (s *Server) updateLobbies() {
 			Name:               name,
 			PlayersCount:       playersCount,
 		}
-		s.lobbies[id] = lobbyInfo
+		if _, ok := s.lobbies[id]; !ok {
+			s.lobbies[id] = GetLobby(lobbyInfo)
+		}
 	}
 	fmt.Printf("Server has %d lobbies at the time\n", len(s.lobbies))
 }
 
-func (s *Server) joinLobby(str, name string) (string, error) {
+func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 	var lobbyID LobbyID
 	err := json.Unmarshal([]byte(str), &lobbyID)
 	if err != nil {
-		return "", err
+		return JoinLobbyResponse{}, err
 	}
 	if lobbyID.ID != nil {
 		var i, _ = strconv.Atoi(*lobbyID.ID)
 		rows, err := s.db.Query("SELECT * FROM lobbies WHERE ID = ?", i)
 		if err != nil {
-			println(err)
+			return JoinLobbyResponse{}, err
 		}
 		if rows.Next() {
 			var joinLobbyResponse JoinLobbyResponse
 			var id uint
 			var width, height, gameBarrierCount, playerBarrierCount, playersCount uint8
-			var name string
-			_ = rows.Scan(&id, &width, &height, &gameBarrierCount, &playerBarrierCount, &name, &playersCount)
-			var ID = new(string)
-			*ID = strconv.Itoa(int(id))
+			var n string
+			_ = rows.Scan(&id, &width, &height, &gameBarrierCount, &playerBarrierCount, &n, &playersCount)
+			var ID = strconv.Itoa(int(id))
 			var lobbyInfo = LobbyInfo{
-				ID:                 ID,
+				ID:                 &ID,
 				Width:              width,
 				Height:             height,
 				GameBarrierCount:   gameBarrierCount,
 				PlayerBarrierCount: playerBarrierCount,
-				Name:               name,
+				Name:               n,
 				PlayersCount:       playersCount,
 			}
 			joinLobbyResponse = JoinLobbyResponse{
 				Data:    lobbyInfo,
 				Success: true,
 			}
-			var res, _ = json.Marshal(joinLobbyResponse)
-			return string(res), nil
+			return joinLobbyResponse, nil
 		}
 	} else {
 		var opponent = s.schedule[name][0]
-		rows, err := s.db.Query("SELECT * FROM lobbies WHERE name LIKE %?% AND name LIKE %?%", name, opponent)
+		rows, err := s.db.Query("SELECT * FROM lobbies WHERE `name` LIKE concat('%', ?, '%') AND `name` LIKE concat('%', ?, '%')", name, opponent)
 		if err != nil {
-			return "", err
+			return JoinLobbyResponse{}, err
 		}
 		if rows.Next() {
 			var joinLobbyResponse JoinLobbyResponse
@@ -304,10 +369,9 @@ func (s *Server) joinLobby(str, name string) (string, error) {
 			var width, height, gameBarrierCount, playerBarrierCount, playersCount uint8
 			var name string
 			_ = rows.Scan(&id, &width, &height, &gameBarrierCount, &playerBarrierCount, &name, &playersCount)
-			var ID = new(string)
-			*ID = strconv.Itoa(int(id))
+			var ID = strconv.Itoa(int(id))
 			var lobbyInfo = LobbyInfo{
-				ID:                 ID,
+				ID:                 &ID,
 				Width:              width,
 				Height:             height,
 				GameBarrierCount:   gameBarrierCount,
@@ -319,11 +383,27 @@ func (s *Server) joinLobby(str, name string) (string, error) {
 				Data:    lobbyInfo,
 				Success: true,
 			}
-			var res, _ = json.Marshal(joinLobbyResponse)
-			return string(res), nil
+			return joinLobbyResponse, nil
 		}
 	}
-	return "", errors.New("not found")
+	return JoinLobbyResponse{}, errors.New("not found")
+}
+
+func (s *Server) postLobby(str string) (string, error) {
+	var lobbyInfo LobbyInfo
+	err := json.Unmarshal([]byte(str), &lobbyInfo)
+	if err != nil {
+		return "", err
+	}
+	res, err2 := s.db.Exec("INSERT INTO lobbies VALUES (?, ?, ?, ?, ?, ?, ?)", nil, lobbyInfo.Width, lobbyInfo.Height, lobbyInfo.GameBarrierCount, lobbyInfo.PlayerBarrierCount, lobbyInfo.Name, lobbyInfo.PlayersCount)
+	if err2 != nil {
+		return "", err2
+	}
+	id, err3 := res.LastInsertId()
+	if err3 != nil {
+		return "", err3
+	}
+	return strconv.Itoa(int(id)), nil
 }
 
 func readConfigs() configs {
