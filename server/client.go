@@ -9,7 +9,7 @@ type ConnectedClient struct {
 	conn                  net.Conn
 	name                  string
 	Lobby                 *Lobby
-	dataReceivedListeners []func(str string, client *ConnectedClient)
+	dataReceivedListeners *FuncStack
 	active                bool
 }
 
@@ -29,8 +29,14 @@ func (c ConnectedClient) communicate() {
 			break
 		}
 		source := string(input[0:n])
-		for _, h := range c.dataReceivedListeners {
-			h(source, &c)
+		var current = c.dataReceivedListeners
+		for {
+			funcPeek(current)(source, &c)
+			if current.next != nil {
+				current = current.next
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -54,7 +60,7 @@ func (c ConnectedClient) Stop() {
 }
 
 func (c ConnectedClient) AddListener(f func(str string, client *ConnectedClient)) {
-	c.dataReceivedListeners = append(c.dataReceivedListeners, f)
+	funcPush(c.dataReceivedListeners, f)
 }
 
 func (c ConnectedClient) login(string2 string) {

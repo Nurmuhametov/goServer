@@ -17,6 +17,7 @@ import (
 )
 
 const MaxPlayers = 24
+const GamesToPlay = 2
 
 type Server struct {
 	Listener        net.Listener
@@ -91,10 +92,10 @@ func (s *Server) addNewClient(conn net.Conn) {
 		conn:                  conn,
 		name:                  "",
 		Lobby:                 nil,
-		dataReceivedListeners: make([]func(string2 string, client *ConnectedClient), 0, 2),
+		dataReceivedListeners: nil,
 		active:                false,
 	}
-	cc.dataReceivedListeners = append(cc.dataReceivedListeners, s.dataReceived)
+	funcPush(cc.dataReceivedListeners, s.dataReceived)
 	cc.StartCommunicator()
 	s.connectedClient[cc] = nil
 }
