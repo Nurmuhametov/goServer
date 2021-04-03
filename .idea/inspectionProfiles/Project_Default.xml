@@ -15,6 +15,7 @@
         <method importPath="math/rand" receiver="*Rand" name="Read" />
         <method importPath="os" receiver="*File" name="Close" />
         <method importPath="net" receiver="Conn" name="Close" />
+        <method importPath="net" receiver="Conn" name="Write" />
       </methods>
     </inspection_tool>
   </profile>

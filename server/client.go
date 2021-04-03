@@ -13,12 +13,12 @@ type ConnectedClient struct {
 	active                bool
 }
 
-func (c ConnectedClient) StartCommunicator() {
+func (c *ConnectedClient) StartCommunicator() {
 	c.active = true
 	go c.communicate()
 }
 
-func (c ConnectedClient) communicate() {
+func (c *ConnectedClient) communicate() {
 	defer c.conn.Close()
 	for c.active {
 		input := make([]byte, 1024*4)
@@ -31,7 +31,7 @@ func (c ConnectedClient) communicate() {
 		source := string(input[0:n])
 		var current = c.dataReceivedListeners
 		for {
-			funcPeek(current)(source, &c)
+			funcPeek(current)(source, c)
 			if current.next != nil {
 				current = current.next
 			} else {
@@ -41,7 +41,7 @@ func (c ConnectedClient) communicate() {
 	}
 }
 
-func (c ConnectedClient) SendData(data []byte) {
+func (c *ConnectedClient) SendData(data []byte) {
 	if c.active {
 		n, err := c.conn.Write(data)
 		if n == 0 || err != nil {
@@ -51,7 +51,7 @@ func (c ConnectedClient) SendData(data []byte) {
 	}
 }
 
-func (c ConnectedClient) Stop() {
+func (c *ConnectedClient) Stop() {
 	c.active = false
 	err := c.conn.Close()
 	if err != nil {
@@ -59,13 +59,6 @@ func (c ConnectedClient) Stop() {
 	}
 }
 
-func (c ConnectedClient) AddListener(f func(str string, client *ConnectedClient)) {
-	funcPush(c.dataReceivedListeners, f)
-}
-
-func (c ConnectedClient) login(string2 string) {
-
-}
-func (c ConnectedClient) joinLobby(string2 string) {
-
+func (c *ConnectedClient) AddListener(f func(str string, client *ConnectedClient)) {
+	funcPush(&c.dataReceivedListeners, f)
 }

@@ -5,21 +5,21 @@ type FuncStack struct {
 	next *FuncStack
 }
 
-func funcPush(s *FuncStack, f func(string2 string, client *ConnectedClient)) {
+func funcPush(s **FuncStack, f func(string2 string, client *ConnectedClient)) {
 	var newRoot = new(FuncStack)
 	*newRoot = FuncStack{
 		f:    f,
-		next: s,
+		next: *s,
 	}
-	s = newRoot
+	*s = newRoot
 }
 
-func funcPop(stack *FuncStack) (func(string2 string, client *ConnectedClient), bool) {
+func funcPop(stack **FuncStack) (func(string2 string, client *ConnectedClient), bool) {
 	if stack == nil {
 		return nil, false
 	}
-	var temp = stack
-	stack = stack.next
+	var temp = *stack
+	*stack = (*stack).next
 	return temp.f, true
 }
 
@@ -35,21 +35,21 @@ type PositionStack struct {
 	next *PositionStack
 }
 
-func posPush(stack *PositionStack, position [2]uint8) {
+func posPush(stack **PositionStack, position [2]uint8) {
 	var newRoot = new(PositionStack)
 	*newRoot = PositionStack{
 		f:    position,
-		next: stack,
+		next: *stack,
 	}
-	stack = newRoot
+	*stack = newRoot
 }
 
-func posPop(stack *PositionStack) ([2]uint8, bool) {
+func posPop(stack **PositionStack) ([2]uint8, bool) {
 	if stack == nil {
 		return [2]uint8{}, false
 	}
-	var temp = stack
-	stack = stack.next
+	var temp = *stack
+	*stack = (*stack).next
 	return temp.f, true
 }
 

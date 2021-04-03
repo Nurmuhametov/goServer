@@ -95,7 +95,8 @@ func (s *Server) addNewClient(conn net.Conn) {
 		dataReceivedListeners: nil,
 		active:                false,
 	}
-	funcPush(cc.dataReceivedListeners, s.dataReceived)
+
+	cc.AddListener(s.dataReceived)
 	cc.StartCommunicator()
 	s.connectedClient[cc] = nil
 }
@@ -136,10 +137,13 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 					s.connectedClient[c] = nil
 					c.Lobby = nil
 				} else {
+					fmt.Printf("Player %s should join to lobby %s\n", c.name, res.Data.Name)
 					data, _ := json.Marshal(res)
 					i, _ := strconv.Atoi(*res.Data.ID)
-					err := s.lobbies[uint(i)].AddPLayer(c)
-					if err != nil {
+					var errCh = make(chan error)
+					go s.lobbies[uint(i)].AddPLayer(c, errCh)
+					var err2 = <-errCh
+					if err2 != nil {
 						var jLR = JoinLobbyResponse{
 							Data:    LobbyInfo{},
 							Success: false,
@@ -152,6 +156,7 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 						s.connectedClient[c] = s.lobbies[uint(i)]
 						c.Lobby = s.lobbies[uint(i)]
 						c.SendData(data)
+						errCh <- nil
 					}
 				}
 			}
@@ -357,6 +362,8 @@ func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 				Success: true,
 			}
 			return joinLobbyResponse, nil
+		} else {
+			return JoinLobbyResponse{}, errors.New("lobby with current id don't found")
 		}
 	} else {
 		var opponent = s.schedule[name][0]
@@ -385,9 +392,10 @@ func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 				Success: true,
 			}
 			return joinLobbyResponse, nil
+		} else {
+			return JoinLobbyResponse{}, errors.New("probably player played all his games, can't find lobby with his name")
 		}
 	}
-	return JoinLobbyResponse{}, errors.New("not found")
 }
 
 func (s *Server) postLobby(str string) (string, error) {
