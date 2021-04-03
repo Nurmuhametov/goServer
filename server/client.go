@@ -3,26 +3,32 @@ package server
 import (
 	"fmt"
 	"net"
+	"sync"
 )
 
-type ConnectedClient struct {
-	conn                  net.Conn
-	name                  string
-	Lobby                 *Lobby
-	dataReceivedListeners *FuncStack
-	active                bool
+//Структура подключенного клиента
+type connectedClient struct {
+	conn                  net.Conn   //Соединение, по которому осуществляется общение с клиентом
+	name                  string     //Логин клиента, аналогичен записи в БД
+	Lobby                 *Lobby     //Лобби, в котором находится данный клиент
+	dataReceivedListeners *FuncStack //Стек функций, вызываемых при получении сообщения
+	active                bool       //Идёт ли общение с данным клиентом
+	mutex                 sync.Mutex //мютекс, который не приостанавливает чтение из потока входящих сообщений
 }
 
-func (c *ConnectedClient) StartCommunicator() {
+//Запускает общение с клиентом, начиная прослушивать от него сообщения
+func (c *connectedClient) StartCommunicator() {
 	c.active = true
 	go c.communicate()
 }
 
-func (c *ConnectedClient) communicate() {
+//Основная функция, которая получает сообщения и вызывает функции из стека
+func (c *connectedClient) communicate() {
 	defer c.conn.Close()
 	for c.active {
 		input := make([]byte, 1024*4)
 		n, err := c.conn.Read(input)
+		c.mutex.Lock()
 		if n == 0 || err != nil {
 			fmt.Println("Read error:", err)
 			c.active = false
@@ -38,10 +44,12 @@ func (c *ConnectedClient) communicate() {
 				break
 			}
 		}
+		c.mutex.Unlock()
 	}
 }
 
-func (c *ConnectedClient) SendData(data []byte) {
+//Отправляет данные клиенту
+func (c *connectedClient) SendData(data []byte) {
 	if c.active {
 		n, err := c.conn.Write(data)
 		if n == 0 || err != nil {
@@ -51,7 +59,8 @@ func (c *ConnectedClient) SendData(data []byte) {
 	}
 }
 
-func (c *ConnectedClient) Stop() {
+//Останавливает общение с клиентом
+func (c *connectedClient) Stop() {
 	c.active = false
 	err := c.conn.Close()
 	if err != nil {
@@ -59,6 +68,7 @@ func (c *ConnectedClient) Stop() {
 	}
 }
 
-func (c *ConnectedClient) AddListener(f func(str string, client *ConnectedClient)) {
+//Добавляет в стек функцию для обработки входящих сообщений
+func (c *connectedClient) AddListener(f func(str string, client *connectedClient)) {
 	funcPush(&c.dataReceivedListeners, f)
 }

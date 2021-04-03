@@ -16,12 +16,16 @@ import (
 	"strconv"
 )
 
+//Максимальное количество подключенных клиентов
 const MaxPlayers = 24
+
+//Количество игр, которые клиенты должны сыграть между собой
 const GamesToPlay = 2
 
+//Структура, отвечающая за сервер. Не создавать больше одного
 type Server struct {
-	Listener        net.Listener
-	connectedClient map[*ConnectedClient]*Lobby
+	listener        net.Listener
+	connectedClient map[*connectedClient]*Lobby
 	lobbies         map[uint]*Lobby
 	db              *sql.DB
 	competitors     []string
@@ -30,20 +34,29 @@ type Server struct {
 	active          bool
 }
 
+//Структура с настройками сервера
 type configs struct {
-	LoginFromFile bool   `json:"loginFromFile"`
-	ServerPort    uint   `json:"serverPort"`
-	MariaAddress  string `json:"mariaAddress"`
-	MariaPort     uint   `json:"mariaPort"`
-	DbName        string `json:"dbName"`
-	DbLogin       string `json:"dbLogin"`
-	DbPassword    string `json:"dbPassword"`
+	//Булевское значение, если true, то значения берутся из файла, иначе - из консоли
+	LoginFromFile bool `json:"loginFromFile"`
+	//Порт, который будет прослушиваться
+	ServerPort uint `json:"serverPort"`
+	//Адрес, по которому нужно обращаться с MariaDB
+	MariaAddress string `json:"mariaAddress"`
+	//Порт, который слушает MariaDB
+	MariaPort uint `json:"mariaPort"`
+	//Название базы данных
+	DbName string `json:"dbName"`
+	//Логин пользователя MariaDB
+	DbLogin string `json:"dbLogin"`
+	//Логин пользователя MariaDB
+	DbPassword string `json:"dbPassword"`
 }
 
+//Создаёт экземпляр сервера
 func Init() *Server {
 	var res = new(Server)
 	conf := readConfigs()
-	res.Listener, _ = net.Listen("tcp4", ":"+strconv.Itoa(int(conf.ServerPort)))
+	res.listener, _ = net.Listen("tcp4", ":"+strconv.Itoa(int(conf.ServerPort)))
 	var credits = fmt.Sprintf("%s:%s@/%s", conf.DbLogin, conf.DbPassword, conf.DbName)
 	db, err := sql.Open("mysql", credits)
 	if err != nil {
@@ -52,20 +65,60 @@ func Init() *Server {
 	res.db = db
 	res.port = conf.ServerPort
 	res.active = true
-	res.connectedClient = make(map[*ConnectedClient]*Lobby, MaxPlayers)
+	res.connectedClient = make(map[*connectedClient]*Lobby, MaxPlayers)
 	res.lobbies = make(map[uint]*Lobby, 256)
 	return res
 }
 
+//Запускает сервер, который запускает инициализацию всех необходимых таблиц в БД, создаёт расписание матчей
+//и начинает принимать входящие подключения
 func (s *Server) Start() {
 	println("Server started")
 	go func() {
 		for s.active {
 			var str string
 			_, _ = fmt.Scanf("%s\n", &str)
-			if str == "exit" {
+			switch str {
+			case "exit":
 				s.active = false
-				_ = s.Listener.Close()
+				_ = s.listener.Close()
+			case "stats":
+				res := s.getStats()
+				for i, val := range res {
+					fmt.Printf("%d. %s \t %d\n", i+1, val.Name, val.Points)
+				}
+			case "delete results":
+				_, _ = s.db.Exec("DELETE FROM game_results")
+			case "update users":
+				s.updateUsers()
+			case "delete users":
+				_, _ = s.db.Exec("DELETE FROM user")
+			case "create schedule":
+				s.createSchedule()
+			case "delete lobbies":
+				_, _ = s.db.Exec("DELETE FROM lobbies")
+			case "create lobbies":
+				s.createLobbies()
+			case "restart":
+				fmt.Print("Вы точно ходите перезапустить сервер? Никто в данный момент не должен играть [Y/n]")
+				_, _ = fmt.Scanf("%s\n", &str)
+				if str == "Y" || str == "y" {
+					fmt.Print("Удаляю результаты игр...")
+					_, _ = s.db.Exec("DELETE FROM game_results")
+					fmt.Print("Удаляю список пользователей...")
+					_, _ = s.db.Exec("DELETE FROM user")
+					fmt.Print("Удаляю лобби...")
+					_, _ = s.db.Exec("DELETE FROM lobbies")
+					s.updateUsers()
+					s.createSchedule()
+					s.createGameResults()
+					s.createLobbies()
+					s.updateLobbies()
+					s.createStats()
+					fmt.Print("Server started")
+				}
+			default:
+				fmt.Print("Неизвестная команда. Доступные команды: exit, stats, delete results, update users, delete users, create schedule, delete lobbies, restart\n")
 			}
 		}
 	}()
@@ -74,9 +127,10 @@ func (s *Server) Start() {
 	s.createGameResults()
 	s.createLobbies()
 	s.updateLobbies()
+	s.createStats()
 	for s.active {
 		println("Waiting for connection")
-		conn, err := s.Listener.Accept()
+		conn, err := s.listener.Accept()
 		if err != nil {
 			_, _ = os.Stderr.Write([]byte(err.Error()))
 			continue
@@ -86,9 +140,10 @@ func (s *Server) Start() {
 	}
 }
 
+//Добавляет нового клиента и устанавливает ему пустое лобби
 func (s *Server) addNewClient(conn net.Conn) {
-	var cc = new(ConnectedClient)
-	*cc = ConnectedClient{
+	var cc = new(connectedClient)
+	*cc = connectedClient{
 		conn:                  conn,
 		name:                  "",
 		Lobby:                 nil,
@@ -101,11 +156,11 @@ func (s *Server) addNewClient(conn net.Conn) {
 	s.connectedClient[cc] = nil
 }
 
-func (s *Server) dataReceived(str string, c *ConnectedClient) {
+//Главная функция, обрабатывающая входящие команды
+func (s *Server) dataReceived(str string, c *connectedClient) {
 	re := regexp.MustCompile("[A-Z ]+[A-Z]|(?:{.+})")
 	split := re.FindAllString(str, 2)
 	if len(split) > 0 {
-		println(str)
 		switch split[0] {
 		case "CONNECTION":
 			var err error
@@ -113,17 +168,17 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 			if err != nil {
 				msg := Message{Msg: "LOGIN FAILED"}
 				data, _ := json.Marshal(msg)
-				c.SendData(data)
+				c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			} else {
 				msg := Message{Msg: "LOGIN OK"}
 				data, _ := json.Marshal(msg)
-				c.SendData(data)
+				c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			}
 		case "SOCKET JOINLOBBY":
 			if c.name == "" {
 				msg := Message{Msg: "LOGIN FIRST"}
 				data, _ := json.Marshal(msg)
-				c.SendData(data)
+				c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			} else {
 				res, err := s.joinLobby(split[1], c.name)
 				if err != nil {
@@ -133,11 +188,10 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 						Success: false,
 					}
 					data, _ := json.Marshal(jLR)
-					c.SendData(data)
+					c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 					s.connectedClient[c] = nil
 					c.Lobby = nil
 				} else {
-					fmt.Printf("Player %s should join to lobby %s\n", c.name, res.Data.Name)
 					data, _ := json.Marshal(res)
 					i, _ := strconv.Atoi(*res.Data.ID)
 					var errCh = make(chan error)
@@ -150,13 +204,13 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 							Success: false,
 						}
 						data, _ := json.Marshal(jLR)
-						c.SendData(data)
+						c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 						s.connectedClient[c] = nil
 						c.Lobby = nil
 					} else {
 						s.connectedClient[c] = s.lobbies[uint(i)]
 						c.Lobby = s.lobbies[uint(i)]
-						c.SendData(data)
+						c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 						errCh <- nil
 					}
 				}
@@ -167,7 +221,7 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 			}
 			msg := Message{Msg: "BYE"}
 			data, _ := json.Marshal(msg)
-			c.SendData(data)
+			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			c.Stop()
 			var id = func() string {
 				if c.name == "" {
@@ -189,28 +243,32 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 				Success: true,
 			}
 			data, _ := json.Marshal(getLobbyResponse)
-			c.SendData(data)
+			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 		case "GET RANDOMLOBBY":
 			var lobbyID = LobbyID{}
 			var data, _ = json.Marshal(lobbyID)
-			c.SendData(data)
+			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 		case "POST LOBBY":
 			id, err := s.postLobby(split[1])
 			if err != nil {
 				msg := Message{Msg: "Неправильно ты, дядя Фёдор, лобби постишь, надо по правилам создавать, читай man"}
 				data, _ := json.Marshal(msg)
-				c.SendData(data)
+				c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			} else {
 				var lobbyID = LobbyID{ID: &id}
 				data, _ := json.Marshal(lobbyID)
-				c.SendData(data)
+				c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			}
 		case "SOCKET LEAVELOBBY":
 			c.Lobby = nil
 			s.connectedClient[c] = nil
 			msg := Message{Msg: "OK"}
 			data, _ := json.Marshal(msg)
-			c.SendData(data)
+			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
+		case "GET STATS":
+			stats := s.getStats()
+			data, _ := json.Marshal(stats)
+			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 		}
 	}
 }
@@ -232,6 +290,7 @@ func (s *Server) login(str string) (string, error) {
 	}
 }
 
+//Обновляет список пользователей, который берется из файла /resources/participants_list
 func (s *Server) updateUsers() {
 	_, err := s.db.Exec("CREATE TABLE IF NOT EXISTS user ( `ID` INT UNSIGNED NOT NULL AUTO_INCREMENT , `login` VARCHAR(20) NOT NULL , PRIMARY KEY (`ID`), UNIQUE `login` (`login`)) ENGINE = InnoDB;")
 	if err != nil {
@@ -260,6 +319,7 @@ func (s *Server) updateUsers() {
 	}
 }
 
+//Создаёт расписание матчей по круговой системе. Обязательно чётное количество участников
 func (s *Server) createSchedule() {
 	s.schedule = make(map[string][]string, len(s.competitors))
 	for _, val := range s.competitors {
@@ -279,6 +339,7 @@ func (s *Server) createSchedule() {
 	}
 }
 
+//Создаёт (если не существует) таблицу в БД с результатами матчей и добавляет внешние ключи
 func (s *Server) createGameResults() {
 	_, err := s.db.Exec("SELECT * FROM game_results")
 	if err != nil {
@@ -286,6 +347,7 @@ func (s *Server) createGameResults() {
 	}
 }
 
+//Создаёт таблицу lobbies, если не существует и заполняет её данными из расписания матчей
 func (s *Server) createLobbies() {
 	_, _ = s.db.Exec("CREATE TABLE IF NOT EXISTS lobbies ( `ID` INT UNSIGNED NOT NULL AUTO_INCREMENT , `width` INT UNSIGNED NOT NULL , `height` INT UNSIGNED NOT NULL , `gameBarrierCount` INT UNSIGNED NOT NULL , `playerBarrierCount` INT UNSIGNED NOT NULL , `name` VARCHAR(100) NOT NULL , `playersCount` INT UNSIGNED NOT NULL , PRIMARY KEY (`ID`), UNIQUE `name` (`name`)) ENGINE = InnoDB;")
 	for i := 0; i < len(s.competitors)-1; i++ {
@@ -301,6 +363,18 @@ func (s *Server) createLobbies() {
 	}
 }
 
+func (s *Server) createStats() {
+	_, _ = s.db.Exec("create view if not exists stats as " +
+		"select login, sum(Points) as pts from " +
+		"(select user.login, Count(*)*3 as Points from user inner join game_results on user.login=game_results.first where result='first' group by ID " +
+		"union all " +
+		"select user.login, Count(*)*3 from user inner join game_results on user.login=game_results.second where result='second' group by ID " +
+		"union all " +
+		"select user.login, Count(*) from user inner join game_results on (user.login=game_results.first or user.login=game_results.second) where result='draw' group by ID" +
+		") as temporary group by login;")
+}
+
+//Обновляет список лобби на сервере из данных в БД
 func (s *Server) updateLobbies() {
 	rows, err := s.db.Query("SELECT * FROM lobbies")
 	if err != nil {
@@ -327,16 +401,13 @@ func (s *Server) updateLobbies() {
 		}
 		if _, ok := s.lobbies[id]; !ok {
 			s.lobbies[id] = GetLobby(lobbyInfo)
-			go func() {
-				<-s.lobbies[id].deletingChan
-				_, _ = s.db.Exec("DELETE FROM lobbies WHERE ID = ?", id)
-				delete(s.lobbies, id)
-			}()
+			s.lobbies[id].server = s
 		}
 	}
 	fmt.Printf("Server has %d lobbies at the time\n", len(s.lobbies))
 }
 
+//Пытается найти подходящее лобби для игрока с именем name. str - {"id":string}
 func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 	var lobbyID LobbyID
 	err := json.Unmarshal([]byte(str), &lobbyID)
@@ -407,6 +478,7 @@ func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 	}
 }
 
+//Создаёт лобби
 func (s *Server) postLobby(str string) (string, error) {
 	var lobbyInfo LobbyInfo
 	err := json.Unmarshal([]byte(str), &lobbyInfo)
@@ -424,6 +496,37 @@ func (s *Server) postLobby(str string) (string, error) {
 	return strconv.Itoa(int(id)), nil
 }
 
+//Отправляет результаты и удалет лобби
+func (s *Server) deleteLobby(res result, lobby *Lobby, client, client2 *connectedClient) {
+	_, _ = s.db.Exec("INSERT INTO game_results VALUES (? ,?, ?)", res.first, res.second, res.result)
+	client.Lobby = nil
+	client2.Lobby = nil
+	s.connectedClient[client] = nil
+	s.connectedClient[client2] = nil
+	var id, _ = strconv.Atoi(*lobby.Info.ID)
+	delete(s.lobbies, uint(id))
+	_, _ = s.db.Exec("DELETE FROM lobbies WHERE ID = ?", id)
+	client.mutex.Unlock()
+	client2.mutex.Unlock()
+}
+
+//Возвращает таблицу с текущими результатами
+func (s *Server) getStats() []Stats {
+	rows, _ := s.db.Query("SELECT * FROM stats")
+	var stats = make([]Stats, 0, MaxPlayers)
+	for rows.Next() {
+		var login string
+		var pts uint16
+		_ = rows.Scan(&login, &pts)
+		stats = append(stats, Stats{
+			Name:   login,
+			Points: pts,
+		})
+	}
+	return stats[:]
+}
+
+//Читает настройки
 func readConfigs() configs {
 	file, err := os.Open("resources/config.json")
 	if err != nil {

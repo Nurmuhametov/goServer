@@ -1,11 +1,11 @@
 package server
 
 type FuncStack struct {
-	f    func(str string, client *ConnectedClient)
+	f    func(str string, client *connectedClient)
 	next *FuncStack
 }
 
-func funcPush(s **FuncStack, f func(string2 string, client *ConnectedClient)) {
+func funcPush(s **FuncStack, f func(string2 string, client *connectedClient)) {
 	var newRoot = new(FuncStack)
 	*newRoot = FuncStack{
 		f:    f,
@@ -14,7 +14,7 @@ func funcPush(s **FuncStack, f func(string2 string, client *ConnectedClient)) {
 	*s = newRoot
 }
 
-func funcPop(stack **FuncStack) (func(string2 string, client *ConnectedClient), bool) {
+func funcPop(stack **FuncStack) (func(string2 string, client *connectedClient), bool) {
 	if stack == nil {
 		return nil, false
 	}
@@ -23,7 +23,7 @@ func funcPop(stack **FuncStack) (func(string2 string, client *ConnectedClient), 
 	return temp.f, true
 }
 
-func funcPeek(stack *FuncStack) func(string2 string, client *ConnectedClient) {
+func funcPeek(stack *FuncStack) func(string2 string, client *connectedClient) {
 	if stack == nil {
 		panic("attempt to funcPeek from empty func stack")
 	}

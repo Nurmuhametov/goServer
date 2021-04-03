@@ -9,19 +9,31 @@ import (
 	"time"
 )
 
-type Lobby struct {
-	Info            LobbyInfo
-	expectingPlayer *ConnectedClient
-	isPlaying       bool
-	opponent        *ConnectedClient
-	channel         chan string
-	deletingChan    chan bool
+type result struct {
+	first  string
+	second string
+	result string
 }
 
+//Структура представляющая лобби
+type Lobby struct {
+	Info            LobbyInfo        //Параметры данного лобби, такие как ширина, высота, количество препятствий
+	expectingPlayer *connectedClient //Ожидающий в лобби клиент
+	isPlaying       bool             //Идёт ли игра в данном лобби в данный момент
+	opponent        *connectedClient //Оппонент в данном лобби
+	server          *Server          //Ссылка на сервер
+	channel         chan string      //Канал, в который игроки пишут свои ходы
+	results         chan result      //Канал, в который отправятся результаты после окончания игры
+}
+
+//Таймаут ходов
 const Timeout = 120
+
+//Наибольшее количество ходов, после которого будет объявлена ничья
 const MaxTurns = 30
 
-func (l *Lobby) removePlayer(client *ConnectedClient) {
+//Удаляет клиента из лобби
+func (l *Lobby) removePlayer(client *connectedClient) {
 	if l.isPlaying {
 		return
 	}
@@ -30,7 +42,8 @@ func (l *Lobby) removePlayer(client *ConnectedClient) {
 	}
 }
 
-func (l *Lobby) AddPLayer(client *ConnectedClient, ch chan error) {
+//Добавляет клиента в лобби, если в лобби уже есть ожидающий клиент, то начинает игру между ними
+func (l *Lobby) AddPLayer(client *connectedClient, ch chan error) {
 	if l.isPlaying {
 		ch <- errors.New("trying to join lobby that already started a game")
 		return
@@ -38,7 +51,6 @@ func (l *Lobby) AddPLayer(client *ConnectedClient, ch chan error) {
 		ch <- nil
 	}
 	_ = <-ch
-	fmt.Printf("Player %s joined lobby %s at address %d\n", client.name, l.Info.Name, &l)
 	if l.expectingPlayer == nil {
 		l.expectingPlayer = client
 	} else {
@@ -46,13 +58,15 @@ func (l *Lobby) AddPLayer(client *ConnectedClient, ch chan error) {
 		l.expectingPlayer.Lobby.opponent = client
 		client.Lobby.opponent = l.expectingPlayer
 		go l.playGame(l.expectingPlayer, client)
-		l.deletingChan <- true
+		var res = <-l.results
+		l.server.deleteLobby(res, l, l.expectingPlayer, client)
 	}
 }
 
-func (l *Lobby) playGame(player1 *ConnectedClient, player2 *ConnectedClient) {
+//Основной метод, который проводит игру между клиентами
+func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	fmt.Printf("Game between %s and %s started!\n", player1.name, player2.name)
-	var first, second = func() (*ConnectedClient, *ConnectedClient) {
+	var first, second = func() (*connectedClient, *connectedClient) {
 		if rand.Uint32()&1 == 0 {
 			return player1, player2
 		} else {
@@ -70,15 +84,14 @@ func (l *Lobby) playGame(player1 *ConnectedClient, player2 *ConnectedClient) {
 		OpponentPosition: field.OpponentPosition,
 		Barriers:         field.Barriers,
 	}
-	var startStr = []byte("SOCKET STARTGAME ")
 	data, _ := json.Marshal(startGameInfo)
-	first.SendData(append(startStr, data...))
+	first.SendData([]byte(fmt.Sprintf("SOCKET STARTGAME %s\n", string(data))))
 	startGameInfo.Move = false
 	startGameInfo.Position = field.OpponentPosition
 	startGameInfo.OpponentPosition = field.Position
 	data, _ = json.Marshal(startGameInfo)
-	second.SendData(append(startStr, data...))
-	var ch = make(chan *ConnectedClient, 1)
+	second.SendData([]byte(fmt.Sprintf("SOCKET STARTGAME %s\n", string(data))))
+	var ch = make(chan *connectedClient, 1)
 	go func() {
 		x := 0
 		leader, follower := first, second
@@ -97,7 +110,6 @@ func (l *Lobby) playGame(player1 *ConnectedClient, player2 *ConnectedClient) {
 						d, _ := json.Marshal(field)
 						follower.SendData([]byte(fmt.Sprintf("SOCKET STEP %s\n", string(d))))
 						//TODO(Log)
-						fmt.Printf("Turn %d, situation %s\n", x+1, res)
 						leader, follower = follower, leader
 						x += 1
 					} else { //Если закончилась
@@ -115,10 +127,15 @@ func (l *Lobby) playGame(player1 *ConnectedClient, player2 *ConnectedClient) {
 	var winner = <-ch
 	_, _ = funcPop(&first.dataReceivedListeners)
 	_, _ = funcPop(&second.dataReceivedListeners)
-	first.Lobby = nil
-	second.Lobby = nil
 	var endGame EndGameInfo
+	first.mutex.Lock()
+	second.mutex.Lock()
 	if winner == nil { //Ничья
+		l.results <- result{
+			first:  first.name,
+			second: second.name,
+			result: "draw",
+		}
 		endGame = EndGameInfo{
 			Result:           "draw",
 			Width:            l.Info.Width,
@@ -131,6 +148,11 @@ func (l *Lobby) playGame(player1 *ConnectedClient, player2 *ConnectedClient) {
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 		second.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 	} else if winner.name == first.name {
+		l.results <- result{
+			first:  first.name,
+			second: second.name,
+			result: "win",
+		}
 		endGame = EndGameInfo{
 			Result:           "win",
 			Width:            l.Info.Width,
@@ -146,6 +168,11 @@ func (l *Lobby) playGame(player1 *ConnectedClient, player2 *ConnectedClient) {
 		res, _ = json.Marshal(endGame)
 		second.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 	} else {
+		l.results <- result{
+			first:  first.name,
+			second: second.name,
+			result: "lose",
+		}
 		endGame = EndGameInfo{
 			Result:           "win",
 			Width:            l.Info.Width,
@@ -163,11 +190,14 @@ func (l *Lobby) playGame(player1 *ConnectedClient, player2 *ConnectedClient) {
 	}
 }
 
+//Меняет местами позиции игроков в поле
 func swap(f *Field) {
 	f.Position, f.OpponentPosition = f.OpponentPosition, f.Position
 }
 
-func isEnded(x int, f Field, first, second *ConnectedClient, swapped bool) (*ConnectedClient, bool) {
+//Проверяет, зкаончилась ли игра на данном этапе. x - номер текущего хода, f - состояние поля, first, second -
+//клиенты в том порядке, в котором начали игру, swapped - если поле присланно вторым клиентом
+func isEnded(x int, f Field, first, second *connectedClient, swapped bool) (*connectedClient, bool) {
 	var player1, player2 [2]uint8
 	if swapped {
 		player1 = f.OpponentPosition
@@ -188,6 +218,7 @@ func isEnded(x int, f Field, first, second *ConnectedClient, swapped bool) (*Con
 	return nil, false
 }
 
+//Генерирует случайное допустимое поле
 func (l *Lobby) generateRandomField() Field {
 	var position = [2]uint8{0, uint8(rand.Uint32()) % l.Info.Width}
 	var opponentPosition = [2]uint8{l.Info.Height - 1, uint8(rand.Uint32()) % l.Info.Width}
@@ -202,6 +233,7 @@ func (l *Lobby) generateRandomField() Field {
 	return field
 }
 
+//Генерирует препятствия для поля
 func generateBarriers(position, opponentPosition [2]uint8, count, width, height uint8) [][4][2]uint8 {
 	var res = make([][4][2]uint8, 0, count)
 	for true {
@@ -227,6 +259,7 @@ func generateBarriers(position, opponentPosition [2]uint8, count, width, height 
 	return res
 }
 
+//Проверяет, существует ли путь из position до противпоположного конца поля
 func isPathExists(position [2]uint8, barriers [][4][2]uint8, width, height uint8) bool {
 	var goal = func() uint8 {
 		if position[0] == 0 {
@@ -262,6 +295,7 @@ func isPathExists(position [2]uint8, barriers [][4][2]uint8, width, height uint8
 	return false
 }
 
+//Получает список доступных ходов
 func expandMoves(pos [2]uint8, barriers [][4][2]uint8, width, height, goal uint8) [][2]uint8 {
 	var res = make([][2]uint8, 0, 4)
 	var moves = func() [4][2]uint8 {
@@ -289,6 +323,7 @@ func expandMoves(pos [2]uint8, barriers [][4][2]uint8, width, height, goal uint8
 	return res
 }
 
+//Проверяет, пересекает ли ход из from в to одно из препятствий
 func isStepOver(from, to [2]uint8, barriers [][4][2]uint8) bool {
 	for i := 0; i < len(barriers); i++ {
 		if from[0] == barriers[i][0][0] && from[1] == barriers[i][0][1] && to[0] == barriers[i][1][0] && to[1] == barriers[i][1][1] ||
@@ -301,6 +336,7 @@ func isStepOver(from, to [2]uint8, barriers [][4][2]uint8) bool {
 	return false
 }
 
+//Проверяет, ставится ли препятствие в пределах поля
 func isValidObstacle(barrier [4][2]uint8, width, height uint8) bool {
 	if barrier[0][0] < 0 || barrier[0][0] >= height || barrier[0][1] < 0 || barrier[0][1] >= width ||
 		barrier[1][0] < 0 || barrier[1][0] >= height || barrier[1][1] < 0 || barrier[1][1] >= width ||
@@ -311,6 +347,7 @@ func isValidObstacle(barrier [4][2]uint8, width, height uint8) bool {
 	return true
 }
 
+//Генерирует случаное препятствие в точке (x,y), dir in [0,7] - одно из восьми возможных направлений
 func randomBarrier(x, y, dir uint8) [4][2]uint8 {
 	switch dir {
 	case 0:
@@ -334,13 +371,13 @@ func randomBarrier(x, y, dir uint8) [4][2]uint8 {
 	}
 }
 
-func getTurn(str string, client *ConnectedClient) {
-	//TODO()
-	fmt.Printf("Got from %s: %s", client.name, str)
+//Вызывается при получении сообщения от клиента, который находится в состоянии игры. Записывает сообщение в канал лобби
+func getTurn(str string, client *connectedClient) {
 	data := strings.TrimPrefix(str, "SOCKET STEP")
 	client.Lobby.channel <- data
 }
 
+//Генерирует лобби с соответствующими параметрами
 func GetLobby(info LobbyInfo) *Lobby {
 	var res = new(Lobby)
 	*res = Lobby{
@@ -349,7 +386,7 @@ func GetLobby(info LobbyInfo) *Lobby {
 		isPlaying:       false,
 		opponent:        nil,
 		channel:         make(chan string, 1),
-		deletingChan:    make(chan bool, 1),
+		results:         make(chan result, 1),
 	}
 	return res
 }
