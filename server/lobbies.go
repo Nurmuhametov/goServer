@@ -15,6 +15,7 @@ type Lobby struct {
 	isPlaying       bool
 	opponent        *ConnectedClient
 	channel         chan string
+	deletingChan    chan bool
 }
 
 const Timeout = 120
@@ -45,6 +46,7 @@ func (l *Lobby) AddPLayer(client *ConnectedClient, ch chan error) {
 		l.expectingPlayer.Lobby.opponent = client
 		client.Lobby.opponent = l.expectingPlayer
 		go l.playGame(l.expectingPlayer, client)
+		l.deletingChan <- true
 	}
 }
 
@@ -347,6 +349,7 @@ func GetLobby(info LobbyInfo) *Lobby {
 		isPlaying:       false,
 		opponent:        nil,
 		channel:         make(chan string, 1),
+		deletingChan:    make(chan bool, 1),
 	}
 	return res
 }

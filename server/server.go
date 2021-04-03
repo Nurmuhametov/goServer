@@ -144,6 +144,7 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 					go s.lobbies[uint(i)].AddPLayer(c, errCh)
 					var err2 = <-errCh
 					if err2 != nil {
+						println(err2.Error())
 						var jLR = JoinLobbyResponse{
 							Data:    LobbyInfo{},
 							Success: false,
@@ -161,7 +162,9 @@ func (s *Server) dataReceived(str string, c *ConnectedClient) {
 				}
 			}
 		case "DISCONNECT":
-			c.Lobby.removePlayer(c)
+			if c.Lobby != nil {
+				c.Lobby.removePlayer(c)
+			}
 			msg := Message{Msg: "BYE"}
 			data, _ := json.Marshal(msg)
 			c.SendData(data)
@@ -324,6 +327,11 @@ func (s *Server) updateLobbies() {
 		}
 		if _, ok := s.lobbies[id]; !ok {
 			s.lobbies[id] = GetLobby(lobbyInfo)
+			go func() {
+				<-s.lobbies[id].deletingChan
+				_, _ = s.db.Exec("DELETE FROM lobbies WHERE ID = ?", id)
+				delete(s.lobbies, id)
+			}()
 		}
 	}
 	fmt.Printf("Server has %d lobbies at the time\n", len(s.lobbies))
@@ -367,6 +375,7 @@ func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 		}
 	} else {
 		var opponent = s.schedule[name][0]
+		s.schedule[name] = s.schedule[name][1:]
 		rows, err := s.db.Query("SELECT * FROM lobbies WHERE `name` LIKE concat('%', ?, '%') AND `name` LIKE concat('%', ?, '%')", name, opponent)
 		if err != nil {
 			return JoinLobbyResponse{}, err
