@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -92,6 +95,20 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	data, _ = json.Marshal(startGameInfo)
 	second.SendData([]byte(fmt.Sprintf("SOCKET STARTGAME %s\n", string(data))))
 	var ch = make(chan *connectedClient, 1)
+	file, err := os.Open("resources/template.html")
+	var log = make([]byte, 1024*100)
+	if err != nil {
+		println(err.Error())
+	} else {
+		_, err2 := file.Read(log)
+		if err2 != nil {
+			println(err2.Error())
+		}
+	}
+	re := regexp.MustCompile("<!--NAME-->")
+	log = re.ReplaceAll(log, []byte(fmt.Sprintf("%s vs %s %s", first.name, second.name, time.Now().Format(time.RFC822))))
+	re = regexp.MustCompile("<!--GAME NAME-->")
+	log = re.ReplaceAll(log, []byte(fmt.Sprintf("Первый игрок - %s, второй игрок %s", first.name, second.name)))
 	go func() {
 		x := 0
 		leader, follower := first, second
@@ -102,6 +119,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 				err := json.Unmarshal([]byte(res), &field)
 				//Если получен ответ в неверном формате
 				if err != nil {
+					re = regexp.MustCompile("<!--COMMENTS-->")
+					log = re.ReplaceAll(log, []byte(fmt.Sprintf("Победил игрок %s так как игрок %s не смог прислать данные в верном формате\n", follower.name, leader.name)))
 					ch <- follower
 					return
 				} else { // Ответ в нормальном формате
@@ -109,7 +128,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 						swap(&field)
 						d, _ := json.Marshal(field)
 						follower.SendData([]byte(fmt.Sprintf("SOCKET STEP %s\n", string(d))))
-						//TODO(Log)
+						l.writeToLog(&log, &field, x, first.name == follower.name)
 						leader, follower = follower, leader
 						x += 1
 					} else { //Если закончилась
@@ -119,6 +138,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 				}
 			//Если ответ не пришёл вовремя
 			case <-time.After(Timeout * time.Second):
+				re = regexp.MustCompile("<!--COMMENTS-->")
+				log = re.ReplaceAll(log, []byte(fmt.Sprintf("Победил игрок %s так как игрок %s не ответил вовремя\n", follower.name, leader.name)))
 				ch <- follower
 				return
 			}
@@ -131,6 +152,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	first.mutex.Lock()
 	second.mutex.Lock()
 	if winner == nil { //Ничья
+		re = regexp.MustCompile("<!--RESULT-->")
+		log = re.ReplaceAll(log, []byte(fmt.Sprintf("Ничья!")))
 		l.results <- result{
 			first:  first.name,
 			second: second.name,
@@ -148,6 +171,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 		second.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 	} else if winner.name == first.name {
+		re = regexp.MustCompile("<!--RESULT-->")
+		log = re.ReplaceAll(log, []byte(fmt.Sprintf("Победил игрок %s", winner.name)))
 		l.results <- result{
 			first:  first.name,
 			second: second.name,
@@ -168,6 +193,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 		res, _ = json.Marshal(endGame)
 		second.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 	} else {
+		re = regexp.MustCompile("<!--RESULT-->")
+		log = re.ReplaceAll(log, []byte(fmt.Sprintf("Победил игрок %s", winner.name)))
 		l.results <- result{
 			first:  first.name,
 			second: second.name,
@@ -187,6 +214,11 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 		endGame.Position, endGame.OpponentPosition = endGame.OpponentPosition, endGame.Position
 		res, _ = json.Marshal(endGame)
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
+	}
+	log = bytes.Trim(log, "\x00")
+	err = os.WriteFile(fmt.Sprintf("logs/%s_vs_ %s_%s.html", first.name, second.name, time.Now().Format(time.StampMicro)), log, 0644)
+	if err != nil {
+		println(err.Error())
 	}
 }
 
@@ -231,6 +263,93 @@ func (l *Lobby) generateRandomField() Field {
 		Barriers:         barriers,
 	}
 	return field
+}
+
+func (l *Lobby) writeToLog(log *[]byte, f *Field, x int, swapped bool) {
+	re := regexp.MustCompile("<!--TURNS-->")
+	var table = make([]byte, f.Width*f.Height)
+	var player1 = func() [2]uint8 {
+		if swapped {
+			return f.OpponentPosition
+		} else {
+			return f.Position
+		}
+	}()
+	var player2 = func() [2]uint8 {
+		if !swapped {
+			return f.OpponentPosition
+		} else {
+			return f.Position
+		}
+	}()
+	table[player1[0]*f.Width+player1[1]] = 1
+	table[player2[0]*f.Width+player2[1]] = 2
+	for _, val := range f.Barriers {
+		// 1 << 2 - top
+		// 1 << 3 - bot
+		// 1 << 4 - left
+		// 1 << 5 - right
+		var rest1, rest2 = defineRestrictions(val[0], val[1])
+		table[val[0][0]*f.Width+val[0][1]] += rest1
+		table[val[1][0]*f.Width+val[1][1]] += rest2
+		rest1, rest2 = defineRestrictions(val[2], val[3])
+		table[val[2][0]*f.Width+val[2][1]] += rest1
+		table[val[3][0]*f.Width+val[3][1]] += rest2
+	}
+	var str strings.Builder
+	str.WriteString(fmt.Sprintf("<p>Ход номер %d</p>\n<table>\n", x+1))
+	for i := uint8(0); i < f.Height; i++ {
+		str.WriteString("<tr>")
+		for j := uint8(0); j < f.Width; j++ {
+			str.WriteString(getStrFromAttr(table[i*f.Width+j]))
+		}
+		str.WriteString("</tr>\n")
+	}
+	str.WriteString("</table>\n<!--TURNS-->")
+	*log = re.ReplaceAll(*log, []byte(str.String()))
+
+}
+
+func getStrFromAttr(b byte) string {
+	// 1 << 2 - top
+	// 1 << 3 - bot
+	// 1 << 4 - left
+	// 1 << 5 - right
+	switch b {
+	case 0:
+		return "<td></td>"
+	case 1:
+		return "<td class=\"player1\">1</td>"
+	case 2:
+		return "<td class=\"player2\">2</td>"
+	case 1 << 2:
+		return "<td class=\"top\"></td>"
+	case 1 << 3:
+		return "<td class=\"bottom\"></td>"
+	case 1 << 4:
+		return "<td class=\"left\"></td>"
+	case 1 << 5:
+		return "<td class=\"right\"></td>"
+	default:
+		return "<td></td>"
+	}
+}
+
+func defineRestrictions(first [2]uint8, second [2]uint8) (uint8, uint8) {
+	switch first[0] - second[0] {
+	case 1:
+		return 1 << 2, 1 << 3
+	case 255:
+		return 1 << 3, 1 << 2
+	case 0:
+		switch first[1] - second[1] {
+		case 1:
+			return 1 << 4, 1 << 5
+		case 255:
+			return 1 << 5, 1 << 4
+		}
+	}
+	return 0, 0
 }
 
 //Генерирует препятствия для поля
