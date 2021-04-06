@@ -1,5 +1,6 @@
 # goServer
 same Server on Golang
+
 0. Установить компилятор go
 1. go get github.com/go-sql-driver/mysql
 2. cd ~/go/src
