@@ -217,9 +217,12 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 	}
 	log = bytes.Trim(log, "\x00")
-	err = os.WriteFile(fmt.Sprintf("logs/%s_vs_ %s_%s.html", first.name, second.name, time.Now().Format(time.StampMicro)), log, 0644)
-	if err != nil {
-		println(err.Error())
+	logFile, err2 := os.Create(fmt.Sprintf("logs/%s_vs_ %s_%s.html", first.name, second.name, time.Now().Format(time.StampMicro)))
+	if err2 != nil {
+		println(err2.Error())
+	} else {
+		_, _ = logFile.Write(log)
+		logFile.Close()
 	}
 }
 
