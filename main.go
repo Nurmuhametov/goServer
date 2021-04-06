@@ -1,6 +1,6 @@
 package main
 
-import "goServer/server"
+import "server"
 
 func main() {
 	var s = server.Init()
