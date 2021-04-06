@@ -23,7 +23,6 @@ type Lobby struct {
 	Info            LobbyInfo        //Параметры данного лобби, такие как ширина, высота, количество препятствий
 	expectingPlayer *connectedClient //Ожидающий в лобби клиент
 	isPlaying       bool             //Идёт ли игра в данном лобби в данный момент
-	opponent        *connectedClient //Оппонент в данном лобби
 	server          *Server          //Ссылка на сервер
 	channel         chan string      //Канал, в который игроки пишут свои ходы
 	results         chan result      //Канал, в который отправятся результаты после окончания игры
@@ -58,8 +57,8 @@ func (l *Lobby) AddPLayer(client *connectedClient, ch chan error) {
 		l.expectingPlayer = client
 	} else {
 		l.isPlaying = true
-		l.expectingPlayer.Lobby.opponent = client
-		client.Lobby.opponent = l.expectingPlayer
+		//l.expectingPlayer.Lobby.opponent = client
+		//client.Lobby.opponent = l.expectingPlayer
 		go l.playGame(l.expectingPlayer, client)
 		var res = <-l.results
 		l.server.deleteLobby(res, l, l.expectingPlayer, client)
@@ -78,6 +77,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	}()
 	first.AddListener(getTurn)
 	second.AddListener(getTurn)
+	//fmt.Printf("First: my opponent is %s\n", first.Lobby.opponent.name)
+	//fmt.Printf("Second: my opponent is %s\n", second.Lobby.opponent.name)
 	var field = l.generateRandomField()
 	var startGameInfo = StartGameInfo{
 		Move:             true,
@@ -149,8 +150,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	_, _ = funcPop(&first.dataReceivedListeners)
 	_, _ = funcPop(&second.dataReceivedListeners)
 	var endGame EndGameInfo
-	first.mutex.Lock()
-	second.mutex.Lock()
+	first.readMutex.Lock()
+	second.readMutex.Lock()
 	if winner == nil { //Ничья
 		re = regexp.MustCompile("<!--RESULT-->")
 		log = re.ReplaceAll(log, []byte(fmt.Sprintf("Ничья!")))
@@ -330,6 +331,22 @@ func getStrFromAttr(b byte) string {
 		return "<td class=\"left\"></td>"
 	case 1 << 5:
 		return "<td class=\"right\"></td>"
+	case 1<<2 + 1:
+		return "<td class=\"top player1\">1</td>"
+	case 1<<3 + 1:
+		return "<td class=\"bottom player1\">1</td>"
+	case 1<<4 + 1:
+		return "<td class=\"left player1\">1</td>"
+	case 1<<5 + 1:
+		return "<td class=\"right player1\">1</td>"
+	case 1<<2 + 2:
+		return "<td class=\"top player2\">2</td>"
+	case 1<<3 + 2:
+		return "<td class=\"bottom player2\">2</td>"
+	case 1<<4 + 2:
+		return "<td class=\"left player2\">2</td>"
+	case 1<<5 + 2:
+		return "<td class=\"right player2\">2</td>"
 	default:
 		return "<td></td>"
 	}
@@ -493,6 +510,7 @@ func randomBarrier(x, y, dir uint8) [4][2]uint8 {
 //Вызывается при получении сообщения от клиента, который находится в состоянии игры. Записывает сообщение в канал лобби
 func getTurn(str string, client *connectedClient) {
 	data := strings.TrimPrefix(str, "SOCKET STEP")
+	//fmt.Printf("Got from %s: %s\n", client.name, str)
 	client.Lobby.channel <- data
 }
 
@@ -503,8 +521,7 @@ func GetLobby(info LobbyInfo) *Lobby {
 		Info:            info,
 		expectingPlayer: nil,
 		isPlaying:       false,
-		opponent:        nil,
-		channel:         make(chan string, 1),
+		channel:         make(chan string),
 		results:         make(chan result, 1),
 	}
 	return res

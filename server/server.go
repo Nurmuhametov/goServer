@@ -14,13 +14,14 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync"
 )
 
 //Максимальное количество подключенных клиентов
 const MaxPlayers = 24
 
 //Количество игр, которые клиенты должны сыграть между собой
-const GamesToPlay = 2
+const GamesToPlay = 5
 
 //Структура, отвечающая за сервер. Не создавать больше одного
 type Server struct {
@@ -30,6 +31,7 @@ type Server struct {
 	db              *sql.DB
 	competitors     []string
 	schedule        map[string][]string
+	scheduleMutex   sync.Mutex
 	port            uint
 	active          bool
 }
@@ -294,7 +296,7 @@ func (s *Server) login(str string) (string, error) {
 func (s *Server) updateUsers() {
 	_, err := s.db.Exec("CREATE TABLE IF NOT EXISTS user ( `ID` INT UNSIGNED NOT NULL AUTO_INCREMENT , `login` VARCHAR(20) NOT NULL , PRIMARY KEY (`ID`), UNIQUE `login` (`login`)) ENGINE = InnoDB;")
 	if err != nil {
-		println(err)
+		println(err.Error())
 	}
 	var users, err2 = os.Open("resources/participants_list")
 	if err2 != nil {
@@ -445,8 +447,10 @@ func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 			return JoinLobbyResponse{}, errors.New("lobby with current id don't found")
 		}
 	} else {
+		s.scheduleMutex.Lock()
 		var opponent = s.schedule[name][0]
 		s.schedule[name] = s.schedule[name][1:]
+		s.scheduleMutex.Unlock()
 		rows, err := s.db.Query("SELECT * FROM lobbies WHERE `name` LIKE concat('%', ?, '%') AND `name` LIKE concat('%', ?, '%')", name, opponent)
 		if err != nil {
 			return JoinLobbyResponse{}, err
@@ -506,8 +510,8 @@ func (s *Server) deleteLobby(res result, lobby *Lobby, client, client2 *connecte
 	var id, _ = strconv.Atoi(*lobby.Info.ID)
 	delete(s.lobbies, uint(id))
 	_, _ = s.db.Exec("DELETE FROM lobbies WHERE ID = ?", id)
-	client.mutex.Unlock()
-	client2.mutex.Unlock()
+	client.readMutex.Unlock()
+	client2.readMutex.Unlock()
 }
 
 //Возвращает таблицу с текущими результатами

@@ -1,0 +1,38 @@
+table{
+    /* margin: 0 auto; */
+    table-layout: fixed;
+    border: 2px solid #000000;
+    border-spacing: 0;
+
+}
+table td{
+    border: 2px solid #D0D0D0;
+   /* border-color: #ED4630; */
+    padding: 5px;
+    /*min-width: 20px;*/
+    text-align: center;
+    vertical-align: middle;
+    height: 18px;
+    width: 18px;
+
+}
+td.left{
+    border-left-color: #FF0000;
+}
+td.right{
+    border-right-color: #FF0000;
+}
+td.top{
+    border-top-color: #FF0000;
+}
+td.bottom{
+    border-bottom-color: #FF0000;
+}
+td.player1{
+    font-weight: bold;
+    color: #05128A;
+}
+td.player2{
+    font-weight: bold;
+    color: #058A38;
+}

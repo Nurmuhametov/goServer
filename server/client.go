@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"sync"
@@ -13,7 +14,7 @@ type connectedClient struct {
 	Lobby                 *Lobby     //Лобби, в котором находится данный клиент
 	dataReceivedListeners *FuncStack //Стек функций, вызываемых при получении сообщения
 	active                bool       //Идёт ли общение с данным клиентом
-	mutex                 sync.Mutex //мютекс, который не приостанавливает чтение из потока входящих сообщений
+	readMutex             sync.Mutex //мьютекс, который приостанавливает чтение из потока входящих сообщений
 }
 
 //Запускает общение с клиентом, начиная прослушивать от него сообщения
@@ -28,7 +29,7 @@ func (c *connectedClient) communicate() {
 	for c.active {
 		input := make([]byte, 1024*4)
 		n, err := c.conn.Read(input)
-		c.mutex.Lock()
+		c.readMutex.Lock()
 		if n == 0 || err != nil {
 			fmt.Println("Read error:", err)
 			c.active = false
@@ -44,18 +45,25 @@ func (c *connectedClient) communicate() {
 				break
 			}
 		}
-		c.mutex.Unlock()
+		c.readMutex.Unlock()
 	}
 }
 
 //Отправляет данные клиенту
 func (c *connectedClient) SendData(data []byte) {
+	fmt.Printf("Sending %s to %s\n", data, c.name)
 	if c.active {
-		n, err := c.conn.Write(data)
-		if n == 0 || err != nil {
+		w := bufio.NewWriter(c.conn)
+		if _, err := w.Write(data); err != nil {
 			fmt.Println("Write error:", err)
 			c.active = false
 		}
+		_ = w.Flush()
+		//n, err := c.conn.Write(data)
+		//if n == 0 || err != nil {
+		//	fmt.Println("Write error:", err)
+		//	c.active = false
+		//}
 	}
 }
 
