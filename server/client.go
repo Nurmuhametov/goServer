@@ -11,7 +11,6 @@ import (
 type connectedClient struct {
 	conn                  net.Conn   //Соединение, по которому осуществляется общение с клиентом
 	name                  string     //Логин клиента, аналогичен записи в БД
-	Lobby                 *Lobby     //Лобби, в котором находится данный клиент
 	dataReceivedListeners *FuncStack //Стек функций, вызываемых при получении сообщения
 	active                bool       //Идёт ли общение с данным клиентом
 	readMutex             sync.Mutex //мьютекс, который приостанавливает чтение из потока входящих сообщений
@@ -51,7 +50,7 @@ func (c *connectedClient) communicate() {
 
 //Отправляет данные клиенту
 func (c *connectedClient) SendData(data []byte) {
-	fmt.Printf("Sending %s to %s\n", data, c.name)
+	//fmt.Printf("Sending %s to %s\n", data, c.name)
 	if c.active {
 		w := bufio.NewWriter(c.conn)
 		if _, err := w.Write(data); err != nil {

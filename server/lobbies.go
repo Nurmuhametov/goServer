@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -44,26 +43,24 @@ func (l *Lobby) removePlayer(client *connectedClient) {
 	}
 }
 
-//Добавляет клиента в лобби, если в лобби уже есть ожидающий клиент, то начинает игру между ними
-func (l *Lobby) AddPLayer(client *connectedClient, ch chan error) {
-	if l.isPlaying {
-		ch <- errors.New("trying to join lobby that already started a game")
-		return
-	} else {
-		ch <- nil
-	}
-	_ = <-ch
-	if l.expectingPlayer == nil {
-		l.expectingPlayer = client
-	} else {
-		l.isPlaying = true
-		//l.expectingPlayer.Lobby.opponent = client
-		//client.Lobby.opponent = l.expectingPlayer
-		go l.playGame(l.expectingPlayer, client)
-		var res = <-l.results
-		l.server.deleteLobby(res, l, l.expectingPlayer, client)
-	}
-}
+////Добавляет клиента в лобби, если в лобби уже есть ожидающий клиент, то начинает игру между ними
+//func (l *Lobby) AddPLayer(client *connectedClient, ch chan error) {
+//	if l.isPlaying {
+//		ch <- errors.New("trying to join lobby that already started a game")
+//		return
+//	} else {
+//		ch <- nil
+//	}
+//	_ = <-ch
+//	if l.expectingPlayer == nil {
+//		l.expectingPlayer = client
+//	} else {
+//		l.isPlaying = true
+//		go l.playGame(l.expectingPlayer, client)
+//		var res = <-l.results
+//		l.server.deleteLobby(res, l, l.expectingPlayer, client)
+//	}
+//}
 
 //Основной метод, который проводит игру между клиентами
 func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
@@ -75,8 +72,8 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 			return player2, player1
 		}
 	}()
-	first.AddListener(getTurn)
-	second.AddListener(getTurn)
+	first.AddListener(l.getTurn)
+	second.AddListener(l.getTurn)
 	//fmt.Printf("First: my opponent is %s\n", first.Lobby.opponent.name)
 	//fmt.Printf("Second: my opponent is %s\n", second.Lobby.opponent.name)
 	var field = l.generateRandomField()
@@ -88,28 +85,10 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 		OpponentPosition: field.OpponentPosition,
 		Barriers:         field.Barriers,
 	}
-	data, _ := json.Marshal(startGameInfo)
-	first.SendData([]byte(fmt.Sprintf("SOCKET STARTGAME %s\n", string(data))))
-	startGameInfo.Move = false
-	startGameInfo.Position = field.OpponentPosition
-	startGameInfo.OpponentPosition = field.Position
-	data, _ = json.Marshal(startGameInfo)
-	second.SendData([]byte(fmt.Sprintf("SOCKET STARTGAME %s\n", string(data))))
+	sendStartGameInfo(first, second, &startGameInfo)
 	var ch = make(chan *connectedClient, 1)
-	file, err := os.Open("resources/template.html")
-	var log = make([]byte, 1024*100)
-	if err != nil {
-		println(err.Error())
-	} else {
-		_, err2 := file.Read(log)
-		if err2 != nil {
-			println(err2.Error())
-		}
-	}
-	re := regexp.MustCompile("<!--NAME-->")
-	log = re.ReplaceAll(log, []byte(fmt.Sprintf("%s vs %s %s", first.name, second.name, time.Now().Format(time.RFC822))))
-	re = regexp.MustCompile("<!--GAME NAME-->")
-	log = re.ReplaceAll(log, []byte(fmt.Sprintf("Первый игрок - %s, второй игрок %s", first.name, second.name)))
+	var log = initLog(first, second)
+	var re *regexp.Regexp
 	go func() {
 		x := 0
 		leader, follower := first, second
@@ -126,13 +105,14 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 					return
 				} else { // Ответ в нормальном формате
 					if winner, ok := isEnded(x, field, first, second, first.name == follower.name); !ok { //Если игра не закончилась
-						swap(&field)
+						field.Position, field.OpponentPosition = field.OpponentPosition, field.Position
 						d, _ := json.Marshal(field)
 						follower.SendData([]byte(fmt.Sprintf("SOCKET STEP %s\n", string(d))))
 						l.writeToLog(&log, &field, x, first.name == follower.name)
 						leader, follower = follower, leader
 						x += 1
 					} else { //Если закончилась
+						l.writeToLog(&log, &field, x, first.name == follower.name)
 						ch <- winner
 						return
 					}
@@ -149,9 +129,15 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	var winner = <-ch
 	_, _ = funcPop(&first.dataReceivedListeners)
 	_, _ = funcPop(&second.dataReceivedListeners)
-	var endGame EndGameInfo
 	first.readMutex.Lock()
 	second.readMutex.Lock()
+	var endGame = EndGameInfo{
+		Width:            l.Info.Width,
+		Height:           l.Info.Height,
+		Position:         field.Position,
+		OpponentPosition: field.OpponentPosition,
+		Barriers:         field.Barriers,
+	}
 	if winner == nil { //Ничья
 		re = regexp.MustCompile("<!--RESULT-->")
 		log = re.ReplaceAll(log, []byte(fmt.Sprintf("Ничья!")))
@@ -161,15 +147,11 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 			result: "draw",
 		}
 		endGame = EndGameInfo{
-			Result:           "draw",
-			Width:            l.Info.Width,
-			Height:           l.Info.Height,
-			Position:         field.Position,
-			OpponentPosition: field.OpponentPosition,
-			Barriers:         field.Barriers,
+			Result: "draw",
 		}
 		res, _ := json.Marshal(endGame)
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
+		endGame.Position, endGame.OpponentPosition = endGame.OpponentPosition, endGame.Position
 		second.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 	} else if winner.name == first.name {
 		re = regexp.MustCompile("<!--RESULT-->")
@@ -180,12 +162,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 			result: "win",
 		}
 		endGame = EndGameInfo{
-			Result:           "win",
-			Width:            l.Info.Width,
-			Height:           l.Info.Height,
-			Position:         field.Position,
-			OpponentPosition: field.OpponentPosition,
-			Barriers:         field.Barriers,
+			Result: "win",
 		}
 		res, _ := json.Marshal(endGame)
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
@@ -202,12 +179,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 			result: "lose",
 		}
 		endGame = EndGameInfo{
-			Result:           "win",
-			Width:            l.Info.Width,
-			Height:           l.Info.Height,
-			Position:         field.Position,
-			OpponentPosition: field.OpponentPosition,
-			Barriers:         field.Barriers,
+			Result: "win",
 		}
 		res, _ := json.Marshal(endGame)
 		second.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
@@ -226,9 +198,32 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	}
 }
 
-//Меняет местами позиции игроков в поле
-func swap(f *Field) {
-	f.Position, f.OpponentPosition = f.OpponentPosition, f.Position
+func initLog(first *connectedClient, second *connectedClient) []byte {
+	file, err := os.Open("resources/template.html")
+	var log = make([]byte, 1024*100)
+	if err != nil {
+		println(err.Error())
+	} else {
+		_, err2 := file.Read(log)
+		defer file.Close()
+		if err2 != nil {
+			println(err2.Error())
+		}
+	}
+	re := regexp.MustCompile("<!--NAME-->")
+	log = re.ReplaceAll(log, []byte(fmt.Sprintf("%s vs %s %s", first.name, second.name, time.Now().Format(time.RFC822))))
+	re = regexp.MustCompile("<!--GAME NAME-->")
+	log = re.ReplaceAll(log, []byte(fmt.Sprintf("Первый игрок - %s, второй игрок %s", first.name, second.name)))
+	return log
+}
+
+func sendStartGameInfo(first *connectedClient, second *connectedClient, startGameInfo *StartGameInfo) {
+	data, _ := json.Marshal(startGameInfo)
+	first.SendData([]byte(fmt.Sprintf("SOCKET STARTGAME %s\n", string(data))))
+	startGameInfo.Move = false
+	startGameInfo.Position, startGameInfo.OpponentPosition = startGameInfo.OpponentPosition, startGameInfo.Position
+	data, _ = json.Marshal(startGameInfo)
+	second.SendData([]byte(fmt.Sprintf("SOCKET STARTGAME %s\n", string(data))))
 }
 
 //Проверяет, зкаончилась ли игра на данном этапе. x - номер текущего хода, f - состояние поля, first, second -
@@ -511,21 +506,21 @@ func randomBarrier(x, y, dir uint8) [4][2]uint8 {
 }
 
 //Вызывается при получении сообщения от клиента, который находится в состоянии игры. Записывает сообщение в канал лобби
-func getTurn(str string, client *connectedClient) {
+func (l *Lobby) getTurn(str string, client *connectedClient) {
 	data := strings.TrimPrefix(str, "SOCKET STEP")
 	//fmt.Printf("Got from %s: %s\n", client.name, str)
-	client.Lobby.channel <- data
+	l.channel <- data
 }
 
-//Генерирует лобби с соответствующими параметрами
-func GetLobby(info LobbyInfo) *Lobby {
-	var res = new(Lobby)
-	*res = Lobby{
-		Info:            info,
-		expectingPlayer: nil,
-		isPlaying:       false,
-		channel:         make(chan string),
-		results:         make(chan result, 1),
-	}
-	return res
-}
+////Генерирует лобби с соответствующими параметрами
+//func GetLobby(info LobbyInfo) *Lobby {
+//	var res = new(Lobby)
+//	*res = Lobby{
+//		Info:            info,
+//		expectingPlayer: nil,
+//		isPlaying:       false,
+//		channel:         make(chan string),
+//		results:         make(chan result, 1),
+//	}
+//	return res
+//}
