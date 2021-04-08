@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
-	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -528,7 +527,7 @@ func (s *Server) tryJoinLobby(c *connectedClient, str string) {
 			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 		} else if lobby.isPlaying {
 			//Лобби создано, но там уже кто-то играет
-			log.Default().Printf("Player %s trying join lobby that already playing game\n", c.name)
+			println("Player %s trying join lobby that already playing game\n", c.name)
 			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			s.clientsMapMutex.Lock()
 			s.connectedClient[c] = nil
