@@ -22,7 +22,6 @@ type Lobby struct {
 	Info            LobbyInfo        //Параметры данного лобби, такие как ширина, высота, количество препятствий
 	expectingPlayer *connectedClient //Ожидающий в лобби клиент
 	isPlaying       bool             //Идёт ли игра в данном лобби в данный момент
-	server          *Server          //Ссылка на сервер
 	channel         chan string      //Канал, в который игроки пишут свои ходы
 	results         chan result      //Канал, в который отправятся результаты после окончания игры
 }
@@ -58,7 +57,7 @@ func (l *Lobby) removePlayer(client *connectedClient) {
 //		l.isPlaying = true
 //		go l.playGame(l.expectingPlayer, client)
 //		var res = <-l.results
-//		l.server.deleteLobby(res, l, l.expectingPlayer, client)
+//		l.Server.deleteLobby(res, l, l.expectingPlayer, client)
 //	}
 //}
 

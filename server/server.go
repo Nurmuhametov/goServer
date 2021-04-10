@@ -20,8 +20,10 @@ import (
 //Максимальное количество подключенных клиентов
 const MaxPlayers = 24
 
+var Server = initServer()
+
 //Структура, отвечающая за сервер. Не создавать больше одного
-type Server struct {
+type server struct {
 	listener        net.Listener
 	connectedClient map[*connectedClient]*Lobby
 	clientsMapMutex sync.Mutex
@@ -57,8 +59,8 @@ type configs struct {
 }
 
 //Создаёт экземпляр сервера
-func Init() *Server {
-	var res = new(Server)
+func initServer() *server {
+	var res = new(server)
 	conf := readConfigs()
 	res.listener, _ = net.Listen("tcp4", ":"+strconv.Itoa(int(conf.ServerPort)))
 	var credits = fmt.Sprintf("%s:%s@/%s", conf.DbLogin, conf.DbPassword, conf.DbName)
@@ -77,8 +79,8 @@ func Init() *Server {
 
 //Запускает сервер, который запускает инициализацию всех необходимых таблиц в БД, создаёт расписание матчей
 //и начинает принимать входящие подключения
-func (s *Server) Start() {
-	println("Server started")
+func (s *server) Start() {
+	println("server started")
 	go s.commandsHandler()
 	s.updateUsers()
 	s.createSchedule()
@@ -99,7 +101,7 @@ func (s *Server) Start() {
 }
 
 //Добавляет нового клиента и устанавливает ему пустое лобби
-func (s *Server) addNewClient(conn net.Conn) {
+func (s *server) addNewClient(conn net.Conn) {
 	var cc = new(connectedClient)
 	*cc = connectedClient{
 		conn:                  conn,
@@ -114,7 +116,7 @@ func (s *Server) addNewClient(conn net.Conn) {
 	s.clientsMapMutex.Unlock()
 }
 
-func (s *Server) commandsHandler() {
+func (s *server) commandsHandler() {
 	for s.active {
 		var str string
 		_, _ = fmt.Scanf("%s\n", &str)
@@ -156,7 +158,7 @@ func (s *Server) commandsHandler() {
 				s.createLobbies()
 				//s.updateLobbies()
 				s.createStats()
-				fmt.Print("Server started\n")
+				fmt.Print("server started\n")
 			}
 		default:
 			fmt.Print("Неизвестная команда. Доступные команды: exit, stats, delete results, update users, delete users, create schedule, delete lobbies, restart\n")
@@ -165,7 +167,7 @@ func (s *Server) commandsHandler() {
 }
 
 //Главная функция, обрабатывающая входящие команды
-func (s *Server) dataReceived(str string, c *connectedClient) {
+func (s *server) dataReceived(str string, c *connectedClient) {
 	re := regexp.MustCompile("[A-Z ]+[A-Z]|(?:{.+})")
 	split := re.FindAllString(str, 2)
 	if len(split) > 0 {
@@ -222,7 +224,7 @@ func (s *Server) dataReceived(str string, c *connectedClient) {
 	}
 }
 
-func (s *Server) login(str string) (string, error) {
+func (s *server) login(str string) (string, error) {
 	var loginInfo LoginInfo
 	err := json.Unmarshal([]byte(str), &loginInfo)
 	if err != nil {
@@ -240,7 +242,7 @@ func (s *Server) login(str string) (string, error) {
 }
 
 //Обновляет список пользователей, который берется из файла /resources/participants_list
-func (s *Server) updateUsers() {
+func (s *server) updateUsers() {
 	_, err := s.db.Exec("CREATE TABLE IF NOT EXISTS user ( `ID` INT UNSIGNED NOT NULL AUTO_INCREMENT , `login` VARCHAR(20) NOT NULL , PRIMARY KEY (`ID`), UNIQUE `login` (`login`)) ENGINE = InnoDB;")
 	if err != nil {
 		println(err.Error())
@@ -269,7 +271,7 @@ func (s *Server) updateUsers() {
 }
 
 //Создаёт расписание матчей по круговой системе. Обязательно чётное количество участников
-func (s *Server) createSchedule() {
+func (s *server) createSchedule() {
 	s.schedule = make(map[string][]string, len(s.competitors))
 	for _, val := range s.competitors {
 		s.schedule[val] = make([]string, 0, uint(len(s.competitors)-1)*s.gamesToPlay)
@@ -289,7 +291,7 @@ func (s *Server) createSchedule() {
 }
 
 //Создаёт (если не существует) таблицу в БД с результатами матчей и добавляет внешние ключи
-func (s *Server) createGameResults() {
+func (s *server) createGameResults() {
 	_, err := s.db.Exec("SELECT * FROM game_results")
 	if err != nil {
 		_, _ = s.db.Exec("CREATE TABLE game_results ( `first` VARCHAR(20) NOT NULL , `second` VARCHAR(20) NOT NULL , `result` SET('first','second','draw') NOT NULL, CONSTRAINT `first` FOREIGN KEY (first) REFERENCES user(login) ON DELETE RESTRICT ON UPDATE RESTRICT, CONSTRAINT `second` FOREIGN KEY (second) REFERENCES user(login) ON DELETE RESTRICT ON UPDATE RESTRICT) ENGINE = InnoDB;")
@@ -297,7 +299,7 @@ func (s *Server) createGameResults() {
 }
 
 //Создаёт таблицу lobbies, если не существует, и заполняет её данными из расписания матчей
-func (s *Server) createLobbies() {
+func (s *server) createLobbies() {
 	_, _ = s.db.Exec("CREATE TABLE IF NOT EXISTS lobbies ( `ID` INT UNSIGNED NOT NULL AUTO_INCREMENT , `width` INT UNSIGNED NOT NULL , `height` INT UNSIGNED NOT NULL , `gameBarrierCount` INT UNSIGNED NOT NULL , `playerBarrierCount` INT UNSIGNED NOT NULL , `name` VARCHAR(100) NOT NULL , `playersCount` INT UNSIGNED NOT NULL , PRIMARY KEY (`ID`), UNIQUE `name` (`name`)) ENGINE = InnoDB;")
 	for i := 0; i < len(s.competitors)-1; i++ {
 		for j := i + 1; j < len(s.competitors); j++ {
@@ -312,7 +314,7 @@ func (s *Server) createLobbies() {
 	}
 }
 
-func (s *Server) createStats() {
+func (s *server) createStats() {
 	_, _ = s.db.Exec("create view if not exists stats as " +
 		"select login, sum(Points) as pts from " +
 		"(select user.login, Count(*)*3 as Points from user inner join game_results on user.login=game_results.first where result='first' group by ID " +
@@ -324,7 +326,7 @@ func (s *Server) createStats() {
 }
 
 //Обновляет список лобби на сервере из данных в БД
-//func (s *Server) updateLobbies() {
+//func (s *server) updateLobbies() {
 //	rows, err := s.db.Query("SELECT * FROM lobbies")
 //	if err != nil {
 //		println(err)
@@ -350,14 +352,14 @@ func (s *Server) createStats() {
 //		}
 //		if _, ok := s.lobbies[id]; !ok {
 //			s.lobbies[id] = GetLobby(lobbyInfo)
-//			s.lobbies[id].server = s
+//			s.lobbies[id].Server = s
 //		}
 //	}
-//	fmt.Printf("Server has %d lobbies at the time\n", len(s.lobbies))
+//	fmt.Printf("server has %d lobbies at the time\n", len(s.lobbies))
 //}
 
 //Пытается найти подходящее лобби для игрока с именем name. str - {"id":string}
-func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
+func (s *server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 	var lobbyID LobbyID
 	err := json.Unmarshal([]byte(str), &lobbyID)
 	if err != nil {
@@ -430,7 +432,7 @@ func (s *Server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 }
 
 //Создаёт лобби
-func (s *Server) postLobby(str string) (string, error) {
+func (s *server) postLobby(str string) (string, error) {
 	var lobbyInfo LobbyInfo
 	err := json.Unmarshal([]byte(str), &lobbyInfo)
 	if err != nil {
@@ -448,7 +450,7 @@ func (s *Server) postLobby(str string) (string, error) {
 }
 
 //Отправляет результаты в БД и удалет лобби
-func (s *Server) deleteLobby(res result, lobby *Lobby, client, client2 *connectedClient) {
+func (s *server) deleteLobby(res result, lobby *Lobby, client, client2 *connectedClient) {
 	_, _ = s.db.Exec("INSERT INTO game_results VALUES (? ,?, ?)", res.first, res.second, res.result)
 	s.clientsMapMutex.Lock()
 	s.connectedClient[client] = nil
@@ -464,7 +466,7 @@ func (s *Server) deleteLobby(res result, lobby *Lobby, client, client2 *connecte
 }
 
 //Возвращает таблицу с текущими результатами
-func (s *Server) getStats() []Stats {
+func (s *server) getStats() []Stats {
 	rows, _ := s.db.Query("SELECT * FROM stats")
 	var stats = make([]Stats, 0, MaxPlayers)
 	for rows.Next() {
@@ -479,7 +481,7 @@ func (s *Server) getStats() []Stats {
 	return stats[:]
 }
 
-func (s *Server) tryLogin(c *connectedClient, str string) {
+func (s *server) tryLogin(c *connectedClient, str string) {
 	var err error
 	c.name, err = s.login(str)
 	if err != nil {
@@ -493,7 +495,7 @@ func (s *Server) tryLogin(c *connectedClient, str string) {
 	}
 }
 
-func (s *Server) tryJoinLobby(c *connectedClient, str string) {
+func (s *server) tryJoinLobby(c *connectedClient, str string) {
 	res, err := s.joinLobby(str, c.name)
 	if err != nil {
 		println(err.Error())
@@ -518,7 +520,6 @@ func (s *Server) tryJoinLobby(c *connectedClient, str string) {
 				Info:            res.Data,
 				expectingPlayer: c,
 				isPlaying:       false,
-				server:          s,
 				channel:         make(chan string, 1),
 				results:         make(chan result, 1),
 			}
@@ -564,7 +565,7 @@ func (s *Server) tryJoinLobby(c *connectedClient, str string) {
 	}
 }
 
-func (s *Server) disconnect(c *connectedClient) {
+func (s *server) disconnect(c *connectedClient) {
 	s.clientsMapMutex.Lock()
 	if lobby, ok := s.connectedClient[c]; ok && lobby != nil {
 		lobby.removePlayer(c)
@@ -585,7 +586,7 @@ func (s *Server) disconnect(c *connectedClient) {
 	delete(s.connectedClient, c)
 }
 
-func (s *Server) getLobbies(c *connectedClient) {
+func (s *server) getLobbies(c *connectedClient) {
 	//s.updateLobbies()
 	var infos = make([]LobbyInfo, 0, MaxPlayers*(MaxPlayers-1)/2*s.gamesToPlay)
 	var getLobbyResponse GetLobbyResponse

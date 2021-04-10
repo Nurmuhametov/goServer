@@ -32,6 +32,7 @@ func (c *connectedClient) communicate() {
 		if n == 0 || err != nil {
 			fmt.Println("Read error:", err)
 			c.active = false
+			c.Stop()
 			break
 		}
 		source := string(input[0:n])
@@ -68,6 +69,7 @@ func (c *connectedClient) SendData(data []byte) {
 
 //Останавливает общение с клиентом
 func (c *connectedClient) Stop() {
+	println("Stopping communication")
 	c.active = false
 	err := c.conn.Close()
 	if err != nil {
