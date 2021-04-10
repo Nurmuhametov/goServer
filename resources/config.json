@@ -6,5 +6,7 @@
   "dbName" : "competition",
   "dbLogin" : "kmakeev",
   "dbPassword" : "test",
-  "gamesToPlay" : 5
+  "gamesToPlay" : 5,
+  "timeout" : 300,
+  "max_turns": 30
 }

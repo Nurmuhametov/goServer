@@ -45,7 +45,7 @@ func posPush(stack **PositionStack, position [2]uint8) {
 }
 
 func posPop(stack **PositionStack) ([2]uint8, bool) {
-	if stack == nil {
+	if *stack == nil {
 		return [2]uint8{}, false
 	}
 	var temp = *stack

@@ -16,6 +16,7 @@
         <method importPath="os" receiver="*File" name="Close" />
         <method importPath="net" receiver="Conn" name="Close" />
         <method importPath="net" receiver="Conn" name="Write" />
+        <method importPath="database/sql" receiver="*Rows" name="Close" />
       </methods>
     </inspection_tool>
   </profile>

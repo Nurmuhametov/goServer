@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"time"
 )
 
 //Максимальное количество подключенных клиентов
@@ -36,6 +37,7 @@ type server struct {
 	port            uint
 	active          bool
 	gamesToPlay     uint
+	Configs         configs
 }
 
 //Структура с настройками сервера
@@ -56,6 +58,10 @@ type configs struct {
 	DbPassword string `json:"dbPassword"`
 	//Количество игр в каждой партии
 	GamesToPlay uint `json:"gamesToPlay"`
+	//Таймаут хода
+	Timeout time.Duration `json:"timeout"`
+	//Максимальное количество ходов в игре, после чего будет объясвлена ничья
+	MaxTurns int `json:"max_turns"`
 }
 
 //Создаёт экземпляр сервера
@@ -74,13 +80,14 @@ func initServer() *server {
 	res.connectedClient = make(map[*connectedClient]*Lobby, MaxPlayers)
 	res.playingLobbies = make(map[uint]*Lobby)
 	res.gamesToPlay = conf.GamesToPlay
+	res.Configs = conf
 	return res
 }
 
 //Запускает сервер, который запускает инициализацию всех необходимых таблиц в БД, создаёт расписание матчей
 //и начинает принимать входящие подключения
 func (s *server) Start() {
-	println("server started")
+	fmt.Println("Server started!")
 	go s.commandsHandler()
 	s.updateUsers()
 	s.createSchedule()
@@ -89,7 +96,7 @@ func (s *server) Start() {
 	//s.updateLobbies()
 	s.createStats()
 	for s.active {
-		println("Waiting for connection")
+		fmt.Println("Waiting for connection")
 		conn, err := s.listener.Accept()
 		if err != nil {
 			_, _ = os.Stderr.Write([]byte(err.Error()))
@@ -145,19 +152,7 @@ func (s *server) commandsHandler() {
 			fmt.Print("Вы точно ходите перезапустить сервер? Никто в данный момент не должен играть [Y/n]")
 			_, _ = fmt.Scanf("%s\n", &str)
 			if str == "Y" || str == "y" {
-				//TODO(Переделать)
-				fmt.Print("Удаляю результаты игр...")
-				_, _ = s.db.Exec("DELETE FROM game_results")
-				fmt.Print("Удаляю список пользователей...")
-				_, _ = s.db.Exec("DELETE FROM user")
-				fmt.Print("Удаляю лобби...")
-				_, _ = s.db.Exec("DELETE FROM lobbies")
-				s.updateUsers()
-				s.createSchedule()
-				s.createGameResults()
-				s.createLobbies()
-				//s.updateLobbies()
-				s.createStats()
+				//TODO()
 				fmt.Print("server started\n")
 			}
 		default:
@@ -231,6 +226,9 @@ func (s *server) login(str string) (string, error) {
 		return "", err
 	}
 	rows, err2 := s.db.Query("SELECT * FROM user WHERE login = ?", loginInfo.Login)
+	if rows != nil {
+		defer rows.Close()
+	}
 	if err2 != nil {
 		return "", err2
 	}
@@ -239,17 +237,18 @@ func (s *server) login(str string) (string, error) {
 	} else {
 		return "", errors.New("login failed")
 	}
+
 }
 
 //Обновляет список пользователей, который берется из файла /resources/participants_list
 func (s *server) updateUsers() {
 	_, err := s.db.Exec("CREATE TABLE IF NOT EXISTS user ( `ID` INT UNSIGNED NOT NULL AUTO_INCREMENT , `login` VARCHAR(20) NOT NULL , PRIMARY KEY (`ID`), UNIQUE `login` (`login`)) ENGINE = InnoDB;")
 	if err != nil {
-		println(err.Error())
+		log(236, err.Error())
 	}
 	var users, err2 = os.Open("resources/participants_list")
 	if err2 != nil {
-		println(err)
+		log(240, err2.Error())
 	}
 	var reader = bufio.NewReader(users)
 	var listUsers = make([]string, 0, MaxPlayers)
@@ -265,7 +264,7 @@ func (s *server) updateUsers() {
 	for _, user := range listUsers {
 		_, err = s.db.Exec("INSERT INTO user VALUES (null ,?) ON DUPLICATE KEY UPDATE `login` = ?", user, user)
 		if err != nil {
-			println(err)
+			log(256, err.Error())
 		}
 	}
 }
@@ -371,6 +370,7 @@ func (s *server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 		if err != nil {
 			return JoinLobbyResponse{}, err
 		}
+		defer rows.Close()
 		if rows.Next() {
 			var joinLobbyResponse JoinLobbyResponse
 			var id uint
@@ -404,6 +404,7 @@ func (s *server) joinLobby(str, name string) (JoinLobbyResponse, error) {
 		if err != nil {
 			return JoinLobbyResponse{}, err
 		}
+		defer rows.Close()
 		if rows.Next() {
 			var joinLobbyResponse JoinLobbyResponse
 			var id uint
@@ -451,7 +452,10 @@ func (s *server) postLobby(str string) (string, error) {
 
 //Отправляет результаты в БД и удалет лобби
 func (s *server) deleteLobby(res result, lobby *Lobby, client, client2 *connectedClient) {
-	_, _ = s.db.Exec("INSERT INTO game_results VALUES (? ,?, ?)", res.first, res.second, res.result)
+	_, err := s.db.Exec("INSERT INTO game_results VALUES (? ,?, ?)", res.first, res.second, res.result)
+	if err != nil {
+		log(444, err.Error())
+	}
 	s.clientsMapMutex.Lock()
 	s.connectedClient[client] = nil
 	s.connectedClient[client2] = nil
@@ -467,7 +471,7 @@ func (s *server) deleteLobby(res result, lobby *Lobby, client, client2 *connecte
 
 //Возвращает таблицу с текущими результатами
 func (s *server) getStats() []Stats {
-	rows, _ := s.db.Query("SELECT * FROM stats")
+	rows, _ := s.db.Query("SELECT * FROM stats ORDER BY pts DESC")
 	var stats = make([]Stats, 0, MaxPlayers)
 	for rows.Next() {
 		var login string
@@ -498,7 +502,7 @@ func (s *server) tryLogin(c *connectedClient, str string) {
 func (s *server) tryJoinLobby(c *connectedClient, str string) {
 	res, err := s.joinLobby(str, c.name)
 	if err != nil {
-		println(err.Error())
+		log(492, err.Error())
 		jLR := JoinLobbyResponse{
 			Data:    LobbyInfo{},
 			Success: false,
@@ -528,7 +532,7 @@ func (s *server) tryJoinLobby(c *connectedClient, str string) {
 			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 		} else if lobby.isPlaying {
 			//Лобби создано, но там уже кто-то играет
-			println("Player %s trying join lobby that already playing game\n", c.name)
+			fmt.Printf("Player %s trying join lobby that already playing game\n", c.name)
 			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 			s.clientsMapMutex.Lock()
 			s.connectedClient[c] = nil
@@ -597,11 +601,12 @@ func (s *server) getLobbies(c *connectedClient) {
 			Success: false,
 		}
 	} else {
+		defer rows.Close()
 		for rows.Next() {
 			var lobbyInfo LobbyInfo
 			err2 := rows.Scan(&lobbyInfo.ID, &lobbyInfo.Width, &lobbyInfo.Height, &lobbyInfo.GameBarrierCount, &lobbyInfo.PlayerBarrierCount, &lobbyInfo.Name, &lobbyInfo.PlayersCount)
 			if err2 != nil {
-				println(err2)
+				log(595, err2.Error())
 			}
 			infos = append(infos, lobbyInfo)
 		}
@@ -618,7 +623,7 @@ func (s *server) getLobbies(c *connectedClient) {
 func readConfigs() configs {
 	file, err := os.Open("resources/config.json")
 	if err != nil {
-		println(err)
+		panic(err)
 	}
 
 	defer file.Close()
@@ -632,4 +637,8 @@ func readConfigs() configs {
 		panic(err)
 	}
 	return res
+}
+
+func log(line int, string2 string) {
+	fmt.Printf("Error at line %d: %s\n", line, string2)
 }

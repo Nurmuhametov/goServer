@@ -69,7 +69,7 @@ func (c *connectedClient) SendData(data []byte) {
 
 //Останавливает общение с клиентом
 func (c *connectedClient) Stop() {
-	println("Stopping communication")
+	//println("Stopping communication")
 	c.active = false
 	err := c.conn.Close()
 	if err != nil {

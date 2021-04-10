@@ -27,10 +27,10 @@ type Lobby struct {
 }
 
 //Таймаут ходов
-const Timeout = 120
+var Timeout = Server.Configs.Timeout
 
 //Наибольшее количество ходов, после которого будет объявлена ничья
-const MaxTurns = 30
+var MaxTurns = Server.Configs.MaxTurns
 
 //Удаляет клиента из лобби
 func (l *Lobby) removePlayer(client *connectedClient) {
@@ -158,7 +158,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 		l.results <- result{
 			first:  first.name,
 			second: second.name,
-			result: "win",
+			result: "first",
 		}
 		endGame = EndGameInfo{
 			Result: "win",
@@ -175,7 +175,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 		l.results <- result{
 			first:  first.name,
 			second: second.name,
-			result: "lose",
+			result: "second",
 		}
 		endGame = EndGameInfo{
 			Result: "win",
