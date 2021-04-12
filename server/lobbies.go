@@ -105,14 +105,15 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 					return
 				} else { // Ответ в нормальном формате
 					if winner, ok := isEnded(x, field, first, second, first.name == follower.name); !ok { //Если игра не закончилась
+						l.writeToLog(&log, &field, x, first.name == follower.name)
 						field.Position, field.OpponentPosition = field.OpponentPosition, field.Position
 						d, _ := json.Marshal(field)
 						follower.SendData([]byte(fmt.Sprintf("SOCKET STEP %s\n", string(d))))
-						l.writeToLog(&log, &field, x, first.name == follower.name)
 						leader, follower = follower, leader
 						x += 1
 					} else { //Если закончилась
 						field.Position, field.OpponentPosition = field.OpponentPosition, field.Position
+						leader, follower = follower, leader
 						l.writeToLog(&log, &field, x, first.name == follower.name)
 						ch <- winner
 						return
@@ -261,7 +262,7 @@ func (l *Lobby) generateRandomField() Field {
 
 func (l *Lobby) writeToLog(log *[]byte, f *Field, x int, swapped bool) {
 	re := regexp.MustCompile("<!--TURNS-->")
-	var table = make([]byte, f.Width*f.Height)
+	var table = make([]uint8, f.Width*f.Height)
 	var player1 = func() [2]uint8 {
 		if swapped {
 			return f.OpponentPosition
@@ -304,7 +305,7 @@ func (l *Lobby) writeToLog(log *[]byte, f *Field, x int, swapped bool) {
 
 }
 
-func getStrFromAttr(b byte) string {
+func getStrFromAttr(b uint8) string {
 	// 1 << 2 - top
 	// 1 << 3 - bot
 	// 1 << 4 - left
@@ -328,7 +329,7 @@ func getStrFromAttr(b byte) string {
 		if b&(1<<4) == 1<<4 {
 			classes.WriteString("left ")
 		}
-		if b%(1<<5) == 1<<5 {
+		if b&(1<<5) == 1<<5 {
 			classes.WriteString("right ")
 		}
 		if b&1 == 1 {
@@ -343,40 +344,6 @@ func getStrFromAttr(b byte) string {
 	} else {
 		return "<td></td>"
 	}
-	//switch b {
-	//case 0:
-	//	return "<td></td>"
-	//case 1:
-	//	return "<td class=\"player1\">1</td>"
-	//case 2:
-	//	return "<td class=\"player2\">2</td>"
-	//case 1 << 2:
-	//	return "<td class=\"top\"></td>"
-	//case 1 << 3:
-	//	return "<td class=\"bottom\"></td>"
-	//case 1 << 4:
-	//	return "<td class=\"left\"></td>"
-	//case 1 << 5:
-	//	return "<td class=\"right\"></td>"
-	//case 1<<2 + 1:
-	//	return "<td class=\"top player1\">1</td>"
-	//case 1<<3 + 1:
-	//	return "<td class=\"bottom player1\">1</td>"
-	//case 1<<4 + 1:
-	//	return "<td class=\"left player1\">1</td>"
-	//case 1<<5 + 1:
-	//	return "<td class=\"right player1\">1</td>"
-	//case 1<<2 + 2:
-	//	return "<td class=\"top player2\">2</td>"
-	//case 1<<3 + 2:
-	//	return "<td class=\"bottom player2\">2</td>"
-	//case 1<<4 + 2:
-	//	return "<td class=\"left player2\">2</td>"
-	//case 1<<5 + 2:
-	//	return "<td class=\"right player2\">2</td>"
-	//default:
-	//	return "<td></td>"
-	//}
 }
 
 func defineRestrictions(first [2]uint8, second [2]uint8) (uint8, uint8) {
