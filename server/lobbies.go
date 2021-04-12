@@ -91,6 +91,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 	go func() {
 		x := 0
 		leader, follower := first, second
+		l.writeToLog(&log, &field, x-1, first.name == follower.name)
 		for {
 			select {
 			//Если ответ пришёл вовремя
@@ -111,6 +112,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 						leader, follower = follower, leader
 						x += 1
 					} else { //Если закончилась
+						field.Position, field.OpponentPosition = field.OpponentPosition, field.Position
 						l.writeToLog(&log, &field, x, first.name == follower.name)
 						ch <- winner
 						return
@@ -145,9 +147,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 			second: second.name,
 			result: "draw",
 		}
-		endGame = EndGameInfo{
-			Result: "draw",
-		}
+		endGame.Result = "draw"
 		res, _ := json.Marshal(endGame)
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 		endGame.Position, endGame.OpponentPosition = endGame.OpponentPosition, endGame.Position
@@ -160,9 +160,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 			second: second.name,
 			result: "first",
 		}
-		endGame = EndGameInfo{
-			Result: "win",
-		}
+		endGame.Result = "win"
 		res, _ := json.Marshal(endGame)
 		first.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 		endGame.Result = "lose"
@@ -177,9 +175,7 @@ func (l *Lobby) playGame(player1 *connectedClient, player2 *connectedClient) {
 			second: second.name,
 			result: "second",
 		}
-		endGame = EndGameInfo{
-			Result: "win",
-		}
+		endGame.Result = "win"
 		res, _ := json.Marshal(endGame)
 		second.SendData([]byte(fmt.Sprintf("SOCKET ENDGAME %s\n", string(res))))
 		endGame.Result = "lose"
@@ -313,40 +309,74 @@ func getStrFromAttr(b byte) string {
 	// 1 << 3 - bot
 	// 1 << 4 - left
 	// 1 << 5 - right
-	switch b {
-	case 0:
+	var classes strings.Builder
+	if b == 0 {
 		return "<td></td>"
-	case 1:
-		return "<td class=\"player1\">1</td>"
-	case 2:
-		return "<td class=\"player2\">2</td>"
-	case 1 << 2:
-		return "<td class=\"top\"></td>"
-	case 1 << 3:
-		return "<td class=\"bottom\"></td>"
-	case 1 << 4:
-		return "<td class=\"left\"></td>"
-	case 1 << 5:
-		return "<td class=\"right\"></td>"
-	case 1<<2 + 1:
-		return "<td class=\"top player1\">1</td>"
-	case 1<<3 + 1:
-		return "<td class=\"bottom player1\">1</td>"
-	case 1<<4 + 1:
-		return "<td class=\"left player1\">1</td>"
-	case 1<<5 + 1:
-		return "<td class=\"right player1\">1</td>"
-	case 1<<2 + 2:
-		return "<td class=\"top player2\">2</td>"
-	case 1<<3 + 2:
-		return "<td class=\"bottom player2\">2</td>"
-	case 1<<4 + 2:
-		return "<td class=\"left player2\">2</td>"
-	case 1<<5 + 2:
-		return "<td class=\"right player2\">2</td>"
-	default:
+	} else {
+		if b&1 == 1 {
+			classes.WriteString("player1 ")
+		}
+		if b&2 == 2 {
+			classes.WriteString("player2 ")
+		}
+		if b&(1<<2) == 1<<2 {
+			classes.WriteString("top ")
+		}
+		if b&(1<<3) == 1<<3 {
+			classes.WriteString("bottom ")
+		}
+		if b&(1<<4) == 1<<4 {
+			classes.WriteString("left ")
+		}
+		if b%(1<<5) == 1<<5 {
+			classes.WriteString("right ")
+		}
+		if b&1 == 1 {
+			return "<td class=\"" + classes.String() + "\">1</td>"
+		}
+		if b&2 == 2 {
+			return "<td class=\"" + classes.String() + "\">2</td>"
+		}
+	}
+	if classes.Len() > 0 {
+		return "<td class=\"" + classes.String() + "\"></td>"
+	} else {
 		return "<td></td>"
 	}
+	//switch b {
+	//case 0:
+	//	return "<td></td>"
+	//case 1:
+	//	return "<td class=\"player1\">1</td>"
+	//case 2:
+	//	return "<td class=\"player2\">2</td>"
+	//case 1 << 2:
+	//	return "<td class=\"top\"></td>"
+	//case 1 << 3:
+	//	return "<td class=\"bottom\"></td>"
+	//case 1 << 4:
+	//	return "<td class=\"left\"></td>"
+	//case 1 << 5:
+	//	return "<td class=\"right\"></td>"
+	//case 1<<2 + 1:
+	//	return "<td class=\"top player1\">1</td>"
+	//case 1<<3 + 1:
+	//	return "<td class=\"bottom player1\">1</td>"
+	//case 1<<4 + 1:
+	//	return "<td class=\"left player1\">1</td>"
+	//case 1<<5 + 1:
+	//	return "<td class=\"right player1\">1</td>"
+	//case 1<<2 + 2:
+	//	return "<td class=\"top player2\">2</td>"
+	//case 1<<3 + 2:
+	//	return "<td class=\"bottom player2\">2</td>"
+	//case 1<<4 + 2:
+	//	return "<td class=\"left player2\">2</td>"
+	//case 1<<5 + 2:
+	//	return "<td class=\"right player2\">2</td>"
+	//default:
+	//	return "<td></td>"
+	//}
 }
 
 func defineRestrictions(first [2]uint8, second [2]uint8) (uint8, uint8) {

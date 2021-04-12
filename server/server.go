@@ -93,7 +93,6 @@ func (s *server) Start() {
 	s.createSchedule()
 	s.createGameResults()
 	s.createLobbies()
-	//s.updateLobbies()
 	s.createStats()
 	for s.active {
 		fmt.Println("Waiting for connection")
@@ -244,11 +243,11 @@ func (s *server) login(str string) (string, error) {
 func (s *server) updateUsers() {
 	_, err := s.db.Exec("CREATE TABLE IF NOT EXISTS user ( `ID` INT UNSIGNED NOT NULL AUTO_INCREMENT , `login` VARCHAR(20) NOT NULL , PRIMARY KEY (`ID`), UNIQUE `login` (`login`)) ENGINE = InnoDB;")
 	if err != nil {
-		log(236, err.Error())
+		logError(236, err.Error())
 	}
 	var users, err2 = os.Open("resources/participants_list")
 	if err2 != nil {
-		log(240, err2.Error())
+		logError(240, err2.Error())
 	}
 	var reader = bufio.NewReader(users)
 	var listUsers = make([]string, 0, MaxPlayers)
@@ -264,7 +263,7 @@ func (s *server) updateUsers() {
 	for _, user := range listUsers {
 		_, err = s.db.Exec("INSERT INTO user VALUES (null ,?) ON DUPLICATE KEY UPDATE `login` = ?", user, user)
 		if err != nil {
-			log(256, err.Error())
+			logError(256, err.Error())
 		}
 	}
 }
@@ -323,39 +322,6 @@ func (s *server) createStats() {
 		"select user.login, Count(*) from user inner join game_results on (user.login=game_results.first or user.login=game_results.second) where result='draw' group by ID" +
 		") as temporary group by login;")
 }
-
-//Обновляет список лобби на сервере из данных в БД
-//func (s *server) updateLobbies() {
-//	rows, err := s.db.Query("SELECT * FROM lobbies")
-//	if err != nil {
-//		println(err)
-//		return
-//	}
-//	for rows.Next() {
-//		var id uint
-//		var width, height, gameBarrierCount, playerBarrierCount, playersCount uint8
-//		var name string
-//		err := rows.Scan(&id, &width, &height, &gameBarrierCount, &playerBarrierCount, &name, &playersCount)
-//		var ID = strconv.Itoa(int(id))
-//		if err != nil {
-//			println(err)
-//		}
-//		var lobbyInfo = LobbyInfo{
-//			ID:                 &ID,
-//			Width:              width,
-//			Height:             height,
-//			GameBarrierCount:   gameBarrierCount,
-//			PlayerBarrierCount: playerBarrierCount,
-//			Name:               name,
-//			PlayersCount:       playersCount,
-//		}
-//		if _, ok := s.lobbies[id]; !ok {
-//			s.lobbies[id] = GetLobby(lobbyInfo)
-//			s.lobbies[id].Server = s
-//		}
-//	}
-//	fmt.Printf("server has %d lobbies at the time\n", len(s.lobbies))
-//}
 
 //Пытается найти подходящее лобби для игрока с именем name. str - {"id":string}
 func (s *server) joinLobby(str, name string) (JoinLobbyResponse, error) {
@@ -454,7 +420,7 @@ func (s *server) postLobby(str string) (string, error) {
 func (s *server) deleteLobby(res result, lobby *Lobby, client, client2 *connectedClient) {
 	_, err := s.db.Exec("INSERT INTO game_results VALUES (? ,?, ?)", res.first, res.second, res.result)
 	if err != nil {
-		log(444, err.Error())
+		logError(444, err.Error())
 	}
 	s.clientsMapMutex.Lock()
 	s.connectedClient[client] = nil
@@ -502,7 +468,7 @@ func (s *server) tryLogin(c *connectedClient, str string) {
 func (s *server) tryJoinLobby(c *connectedClient, str string) {
 	res, err := s.joinLobby(str, c.name)
 	if err != nil {
-		log(492, err.Error())
+		logError(492, err.Error())
 		jLR := JoinLobbyResponse{
 			Data:    LobbyInfo{},
 			Success: false,
@@ -540,6 +506,7 @@ func (s *server) tryJoinLobby(c *connectedClient, str string) {
 		} else {
 			//Лобби создано и там кто-то ждёт
 			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
+			time.Sleep(1 * time.Second)
 			go func() {
 				lobby.playGame(c, lobby.expectingPlayer)
 				gameResult := <-lobby.results
@@ -547,25 +514,6 @@ func (s *server) tryJoinLobby(c *connectedClient, str string) {
 			}()
 		}
 		s.lobbiesMutex.Unlock()
-		//var errCh = make(chan error)
-		//go s.lobbies[uint(i)].AddPLayer(c, errCh)
-		//var err2 = <-errCh
-		//if err2 != nil {
-		//	println(err2.Error())
-		//	var jLR = JoinLobbyResponse{
-		//		Data:    LobbyInfo{},
-		//		Success: false,
-		//	}
-		//	data, _ := json.Marshal(jLR)
-		//	c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
-		//	s.connectedClient[c] = nil
-		//	c.Lobby = nil
-		//} else {
-		//	s.connectedClient[c] = s.lobbies[uint(i)]
-		//	c.Lobby = s.lobbies[uint(i)]
-		//	c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
-		//	errCh <- nil
-		//}
 	}
 }
 
@@ -606,7 +554,7 @@ func (s *server) getLobbies(c *connectedClient) {
 			var lobbyInfo LobbyInfo
 			err2 := rows.Scan(&lobbyInfo.ID, &lobbyInfo.Width, &lobbyInfo.Height, &lobbyInfo.GameBarrierCount, &lobbyInfo.PlayerBarrierCount, &lobbyInfo.Name, &lobbyInfo.PlayersCount)
 			if err2 != nil {
-				log(595, err2.Error())
+				logError(595, err2.Error())
 			}
 			infos = append(infos, lobbyInfo)
 		}
@@ -639,6 +587,6 @@ func readConfigs() configs {
 	return res
 }
 
-func log(line int, string2 string) {
+func logError(line int, string2 string) {
 	fmt.Printf("Error at line %d: %s\n", line, string2)
 }
