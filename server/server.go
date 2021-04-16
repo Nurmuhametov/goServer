@@ -482,18 +482,23 @@ func (s *server) tryJoinLobby(c *connectedClient, str string) {
 		data, _ := json.Marshal(res)
 		i, _ := strconv.Atoi(*res.Data.ID)
 		s.lobbiesMutex.Lock()
-		if lobby, ok := s.playingLobbies[uint(i)]; !ok {
+		if lobby, ok := s.playingLobbies[uint(i)]; !ok || lobby.expectingPlayer == nil {
 			//JoinLobby, но никто ещё не подключался
 			s.clientsMapMutex.Lock()
-			lobby = new(Lobby)
-			*lobby = Lobby{
-				Info:            res.Data,
-				expectingPlayer: c,
-				isPlaying:       false,
-				channel:         make(chan string, 1),
-				results:         make(chan result, 1),
+			if lobby == nil {
+				lobby = new(Lobby)
+				*lobby = Lobby{
+					Info:            res.Data,
+					expectingPlayer: c,
+					isPlaying:       false,
+					channel:         make(chan string, 1),
+					results:         make(chan result, 1),
+				}
+			} else {
+				lobby.expectingPlayer = c
 			}
 			s.playingLobbies[uint(i)] = lobby
+			s.connectedClient[c] = lobby
 			s.clientsMapMutex.Unlock()
 			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
 		} else if lobby.isPlaying {
@@ -503,9 +508,10 @@ func (s *server) tryJoinLobby(c *connectedClient, str string) {
 			s.clientsMapMutex.Lock()
 			s.connectedClient[c] = nil
 			s.clientsMapMutex.Unlock()
-		} else {
+		} else if lobby.expectingPlayer != nil {
 			//Лобби создано и там кто-то ждёт
 			c.SendData([]byte(fmt.Sprintf("%s\n", string(data))))
+			s.connectedClient[c] = lobby
 			time.Sleep(1 * time.Second)
 			go func() {
 				lobby.playGame(c, lobby.expectingPlayer)

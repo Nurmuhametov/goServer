@@ -31,8 +31,8 @@ func (c *connectedClient) communicate() {
 		c.readMutex.Lock()
 		if n == 0 || err != nil {
 			fmt.Println("Read error:", err)
+			Server.disconnect(c)
 			c.active = false
-			c.Stop()
 			break
 		}
 		source := string(input[0:n])
@@ -51,7 +51,7 @@ func (c *connectedClient) communicate() {
 
 //Отправляет данные клиенту
 func (c *connectedClient) SendData(data []byte) {
-	//fmt.Printf("Sending %s to %s\n", data, c.name)
+	fmt.Printf("Sending %s to %s\n", data, c.name)
 	if c.active {
 		w := bufio.NewWriter(c.conn)
 		if _, err := w.Write(data); err != nil {
